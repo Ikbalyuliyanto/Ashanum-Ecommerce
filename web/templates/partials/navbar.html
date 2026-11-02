@@ -1,0 +1,6 @@
+{{/* Links are added by the phase that ships each page (products, cart, account). */}}
+{{define "navbar" -}}
+<nav class="nav" aria-label="Navigasi utama">
+  <a class="nav__link{{if eq .Path "/"}} is-active{{end}}" href="/">Beranda</a>
+</nav>
+{{- end}}

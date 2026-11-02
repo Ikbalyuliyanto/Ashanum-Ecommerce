@@ -1,0 +1,41 @@
+# Install: /etc/systemd/system/ecommerce.service
+#   systemctl daemon-reload && systemctl enable --now ecommerce
+[Unit]
+Description=E-commerce web application (Go)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ecommerce
+Group=ecommerce
+WorkingDirectory=/opt/ecommerce
+# Secrets live here (root:root, chmod 600), never in the repository.
+EnvironmentFile=/etc/ecommerce/ecommerce.env
+# Soft heap target for the Go GC; keeps memory flat on the 2 GB device.
+Environment=GOMEMLIMIT=256MiB
+ExecStart=/opt/ecommerce/ecommerce serve
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+LimitNOFILE=65536
+MemoryMax=512M
+
+# Hardening: the app only needs the network; it writes no local files.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

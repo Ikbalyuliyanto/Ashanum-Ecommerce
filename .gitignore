@@ -1,0 +1,29 @@
+# Build output
+bin/
+dist/
+/ecommerce
+/ecommerce-*
+*.exe
+*.test
+
+# Environment & secrets (only the example is tracked)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Temporary files, logs, local databases
+*.log
+*.tmp
+tmp/
+temp/
+scratchpad/
+coverage.out
+pgdata/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,5 @@
+# Always LF in the working tree (migration checksums, nginx/systemd files on Linux).
+* text=auto eol=lf
+*.png binary
+*.ico binary
+*.webp binary

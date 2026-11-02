@@ -1,0 +1,12 @@
+{{template "base" .}}
+
+{{define "title"}}{{.Data.Title}} · {{.App.Name}}{{end}}
+
+{{define "content"}}
+<section class="error-page">
+  <p class="error-page__code">{{.Data.Status}}</p>
+  <h1>{{.Data.Title}}</h1>
+  <p>{{.Data.Message}}</p>
+  <a class="btn btn--primary" href="/">Kembali ke beranda</a>
+</section>
+{{end}}

@@ -1,0 +1,15 @@
+# sqlc reads the schema straight from the migrations, so there is one source
+# of truth. Queries go in internal/database/queries/<module>.sql and generate
+# into package dbgen, which each module's repository wraps.
+version: "2"
+sql:
+  - engine: postgresql
+    schema: internal/database/migrations
+    queries: internal/database/queries
+    gen:
+      go:
+        package: dbgen
+        out: internal/database/dbgen
+        sql_package: pgx/v5
+        emit_empty_slices: true
+        emit_pointers_for_null_types: true
