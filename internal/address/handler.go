@@ -27,7 +27,8 @@ type listPage struct {
 }
 
 type formPage struct {
-	ID        int64 // 0 for a new address
+	Next      string // safe local path to return to after saving (e.g. checkout)
+	ID        int64  // 0 for a new address
 	Form      Input
 	IsPrimary bool
 	Errors    validate.Errors
@@ -40,7 +41,10 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) NewForm(w http.ResponseWriter, r *http.Request) {
-	h.view.Render(w, r, http.StatusOK, "user/address-form", formPage{Form: Input{Label: "Rumah"}})
+	h.view.Render(w, r, http.StatusOK, "user/address-form", formPage{
+		Form: Input{Label: "Rumah"},
+		Next: view.SafePath(r.URL.Query().Get("next"), ""),
+	})
 }
 
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
@@ -50,7 +54,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, err := h.svc.Create(r.Context(), p.UserID, in)
-	h.afterSave(w, r, formPage{Form: in}, err)
+	h.afterSave(w, r, formPage{Form: in, Next: view.SafePath(r.PostForm.Get("next"), "")}, err)
 }
 
 func (h *Handler) EditForm(w http.ResponseWriter, r *http.Request) {
@@ -134,7 +138,7 @@ func (h *Handler) afterSave(w http.ResponseWriter, r *http.Request, page formPag
 	switch {
 	case err == nil:
 		h.view.SetFlash(w, "success", "Alamat berhasil disimpan.")
-		http.Redirect(w, r, "/account/addresses", http.StatusSeeOther)
+		http.Redirect(w, r, view.SafePath(page.Next, "/account/addresses"), http.StatusSeeOther)
 	case errors.Is(err, ErrNotFound):
 		h.view.Error(w, r, http.StatusNotFound)
 	case errors.Is(err, ErrLimitReached):

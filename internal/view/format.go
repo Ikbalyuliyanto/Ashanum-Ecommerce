@@ -4,6 +4,7 @@ import (
 	"html/template"
 	"strconv"
 	"strings"
+	"time"
 
 	"ecommerce/internal/media"
 )
@@ -60,4 +61,17 @@ func (r *Renderer) imageURL(raw string, width int) template.URL {
 	// Valid only admits https Cloudinary URLs and base64 data:image URIs,
 	// so marking the result as a trusted URL is safe.
 	return template.URL(media.Resize(raw, width*2))
+}
+
+// wib is Western Indonesia Time (UTC+7, no daylight saving); order dates
+// are shown in it.
+var wib = time.FixedZone("WIB", 7*60*60)
+
+var monthsID = [...]string{"Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"}
+
+// FormatDateTime renders "3 Nov 2026, 10:15 WIB".
+func FormatDateTime(t time.Time) string {
+	t = t.In(wib)
+	return strconv.Itoa(t.Day()) + " " + monthsID[t.Month()-1] + " " + strconv.Itoa(t.Year()) +
+		", " + t.Format("15:04") + " WIB"
 }

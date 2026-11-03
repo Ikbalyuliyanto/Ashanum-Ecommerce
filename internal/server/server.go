@@ -16,9 +16,11 @@ import (
 	"ecommerce/internal/auth"
 	"ecommerce/internal/cart"
 	"ecommerce/internal/category"
+	"ecommerce/internal/checkout"
 	"ecommerce/internal/config"
 	"ecommerce/internal/home"
 	"ecommerce/internal/middleware"
+	"ecommerce/internal/order"
 	"ecommerce/internal/product"
 	"ecommerce/internal/user"
 	"ecommerce/internal/view"
@@ -41,6 +43,8 @@ func NewRouter(d Deps) http.Handler {
 	categorySvc := category.NewService(category.NewRepository(d.DB))
 	productSvc := product.NewService(product.NewRepository(d.DB))
 	cartSvc := cart.NewService(cart.NewRepository(d.DB))
+	orderSvc := order.NewService(order.NewRepository(d.DB))
+	checkoutSvc := checkout.NewService(checkout.NewRepository(d.DB), addressSvc)
 
 	// Header cart badge on full pages for signed-in users (one small query).
 	d.View.SetCartCounter(func(r *http.Request) int {
@@ -94,6 +98,8 @@ func NewRouter(d Deps) http.Handler {
 		user.NewHandler(userSvc, d.View).Routes(r)
 		address.NewHandler(addressSvc, d.View).Routes(r)
 		cart.NewHandler(cartSvc, d.View).Routes(r)
+		checkout.NewHandler(checkoutSvc, cartSvc, orderSvc, d.View).Routes(r)
+		order.NewHandler(orderSvc, d.View).Routes(r)
 	})
 
 	return r

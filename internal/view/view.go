@@ -96,6 +96,7 @@ func (r *Renderer) funcs() template.FuncMap {
 		"hasPrefix":   strings.HasPrefix,
 		"rupiah":      FormatRupiah,
 		"sold":        FormatSold,
+		"datetime":    FormatDateTime,
 		"img":         r.imageURL,
 		"add":         func(a, b int) int { return a + b },
 		"sub":         func(a, b int) int { return a - b },
@@ -293,4 +294,17 @@ func initial(s string) string {
 		return strings.ToUpper(string(r))
 	}
 	return "?"
+}
+
+// SafePath returns s when it is a same-site path ("/cart?x=1"), otherwise
+// fallback. It blocks open redirects such as //evil.example or /\evil.
+func SafePath(s, fallback string) string {
+	if s == "" || !strings.HasPrefix(s, "/") || strings.HasPrefix(s, "//") || strings.HasPrefix(s, "/\\") ||
+		strings.ContainsAny(s, "\r\n\t") {
+		return fallback
+	}
+	if u, err := url.Parse(s); err != nil || u.IsAbs() || u.Host != "" {
+		return fallback
+	}
+	return s
 }

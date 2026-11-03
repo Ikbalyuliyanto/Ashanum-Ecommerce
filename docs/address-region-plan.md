@@ -1,6 +1,9 @@
-# Rencana kode wilayah alamat (untuk Phase 5 — Shipping)
+# Rencana kode wilayah alamat (untuk fase Shipping)
 
-Status: **ditunda ke Phase 5.** Dokumen ini ditulis di Phase 3 sebagai analisis.
+Status: **ditunda ke fase integrasi pengiriman.** Ditulis di Phase 3; ditinjau ulang di
+Phase 5 (checkout): pesanan menyimpan wilayah sebagai snapshot teks dan belum membutuhkan
+kode wilayah karena ongkos kirim belum dihitung. Kolom `village_code` baru ditambahkan
+bersama integrasi kurir.
 
 ## Kondisi sekarang (Phase 2)
 
@@ -14,12 +17,12 @@ Menambahkan kolom nullable (`province_code`, `city_code`, ...) secara teknis ama
 1. Belum ada tabel master wilayah dan form pemilih wilayah, sehingga kolom itu akan selalu
    `NULL`: kolom mati yang memberi kesan data terstruktur padahal tidak.
 2. Sistem kode yang dipakai bergantung pada sumber data wilayah dan kebutuhan kurir
-   (kode Kemendagri/BPS vs ID area milik penyedia ongkir). Keputusan ini milik Phase 5.
+   (kode Kemendagri/BPS vs ID area milik penyedia ongkir). Keputusan ini milik fase Shipping.
 3. Kode Kemendagri bersifat hierarkis (provinsi 2 digit → kab/kota 4 → kecamatan 6/7 →
    kelurahan/desa 10). Cukup **satu** kolom `village_code`; tingkat di atasnya bisa
    diturunkan dari prefiks. Empat kolom kode akan menduplikasi informasi yang sama.
 
-## Rencana migrasi Phase 5
+## Rencana migrasi (fase Shipping)
 
 1. **Master wilayah** — migrasi baru, misalnya `00NN_regions.sql`:
 
@@ -59,7 +62,7 @@ Menambahkan kolom nullable (`province_code`, `city_code`, ...) secara teknis ama
    pemetaan terpisah, misalnya `shipping_area_map (region_code, provider, provider_area_id)`,
    agar ganti penyedia tidak mengubah data alamat.
 
-## Risiko yang perlu diputuskan di Phase 5
+## Risiko yang perlu diputuskan di fase Shipping
 
 - Lisensi dan kemutakhiran dataset wilayah (pemekaran wilayah terjadi berkala).
 - Kecocokan kode pos dengan kelurahan tidak selalu satu-satu; kode pos tetap diisi pengguna.

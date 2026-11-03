@@ -16,15 +16,15 @@
   <section class="card" aria-labelledby="orders-title">
     <div class="card__head">
       <h2 class="card__title" id="orders-title">Pesanan Saya</h2>
-      <span class="soon">Segera hadir</span>
+      <a class="section__more" href="/account/orders">Lihat Riwayat ›</a>
     </div>
     <div class="shortcuts">
-      <div class="shortcut" aria-disabled="true">{{icon "wallet"}}<span>Belum Bayar</span></div>
-      <div class="shortcut" aria-disabled="true">{{icon "package"}}<span>Dikemas</span></div>
-      <div class="shortcut" aria-disabled="true">{{icon "truck"}}<span>Dikirim</span></div>
-      <div class="shortcut" aria-disabled="true">{{icon "check-circle"}}<span>Selesai</span></div>
-      <div class="shortcut" aria-disabled="true">{{icon "x-circle"}}<span>Dibatalkan</span></div>
-      <div class="shortcut" aria-disabled="true">{{icon "rotate"}}<span>Pengembalian</span></div>
+      <a class="shortcut" href="/account/orders?status=unpaid">{{icon "wallet"}}<span>Belum Bayar</span></a>
+      <a class="shortcut" href="/account/orders?status=processing">{{icon "package"}}<span>Dikemas</span></a>
+      <a class="shortcut" href="/account/orders?status=shipped">{{icon "truck"}}<span>Dikirim</span></a>
+      <a class="shortcut" href="/account/orders?status=completed">{{icon "check-circle"}}<span>Selesai</span></a>
+      <a class="shortcut" href="/account/orders?status=cancelled">{{icon "x-circle"}}<span>Dibatalkan</span></a>
+      <div class="shortcut" aria-disabled="true" title="Segera hadir" data-phase="7">{{icon "rotate"}}<span>Pengembalian</span></div>
     </div>
   </section>
 

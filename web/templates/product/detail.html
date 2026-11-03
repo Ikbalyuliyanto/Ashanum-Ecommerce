@@ -54,8 +54,10 @@
 {{end}}
 
 {{/* Price, options, quantity and purchase buttons. Option chips and the
-     quantity stepper are links (?o=…&q=…); HTMX swaps only this panel. Add to
-     cart is a normal form post that HTMX upgrades. Buy Now is Phase 5. */}}
+     quantity stepper are links (?o=…&q=…); HTMX swaps only this panel. One
+     plain form ("purchase") carries variant and quantity: "Keranjang" posts
+     it to /cart/items (upgraded by HTMX on the button), "Beli Sekarang"
+     submits it as GET /checkout (Buy Now; the cart is not touched). */}}
 {{define "product-buy"}}
 {{$s := .Data.Selection}}{{$d := .Data}}
 <div id="product-buy" class="buy">
@@ -85,7 +87,7 @@
       <a class="qty__btn" href="{{$d.QuantityURL (sub $d.Quantity 1)}}" hx-get="{{$d.QuantityURL (sub $d.Quantity 1)}}"
          hx-target="#product-buy" hx-swap="outerHTML" hx-replace-url="true" rel="nofollow" aria-label="Kurangi">{{icon "minus"}}</a>
       {{else}}<span class="qty__btn is-disabled" aria-hidden="true">{{icon "minus"}}</span>{{end}}
-      <input class="qty__input" form="add-to-cart" type="number" name="quantity" value="{{$d.Quantity}}"
+      <input class="qty__input" form="purchase" type="number" name="quantity" value="{{$d.Quantity}}"
              min="1" max="{{$d.MaxQuantity}}" inputmode="numeric" aria-labelledby="qty-label">
       {{if lt $d.Quantity $d.MaxQuantity}}
       <a class="qty__btn" href="{{$d.QuantityURL (add $d.Quantity 1)}}" hx-get="{{$d.QuantityURL (add $d.Quantity 1)}}"
@@ -100,8 +102,7 @@
   </div>
 
   {{if and .User $d.CanAddToCart}}
-  <form id="add-to-cart" method="post" action="/cart/items"
-        hx-post="/cart/items" hx-target="#cart-feedback" hx-swap="innerHTML">
+  <form id="purchase" method="post" action="/cart/items">
     <input type="hidden" name="variant_id" value="{{$s.Variant.ID}}">
     <input type="hidden" name="return_to" value="{{$d.CurrentURL}}">
   </form>
@@ -111,7 +112,7 @@
   <div id="cart-feedback" class="buy__feedback" aria-live="polite"></div>
   <p class="buy__note">
     {{- if not $d.CanAddToCart}}{{if $s.Variant}}Stok varian ini habis.{{else}}Pilih varian untuk menambahkan ke keranjang.{{end}} {{end -}}
-    Beli Sekarang segera hadir.{{with $s.Variant}} <span class="muted">SKU {{.SKU}}</span>{{end}}</p>
+    {{- with $s.Variant}}<span class="muted">SKU {{.SKU}}</span>{{end}}</p>
 
   {{/* Mobile sticky purchase bar; inside the panel so it follows the choice. */}}
   <div class="buy-bar">{{template "buy-buttons" .}}</div>
@@ -121,12 +122,13 @@
 {{define "buy-buttons"}}
 {{if not .Data.CanAddToCart}}
 <button class="btn btn--outline" type="button" disabled>{{icon "cart"}}<span class="buy__long">Masukkan </span>Keranjang</button>
+<button class="btn btn--primary" type="button" disabled>Beli Sekarang</button>
 {{else if .User}}
-<button class="btn btn--outline" type="submit" form="add-to-cart">{{icon "cart"}}<span class="buy__long">Masukkan </span>Keranjang</button>
+<button class="btn btn--outline" type="submit" form="purchase"
+        hx-post="/cart/items" hx-target="#cart-feedback" hx-swap="innerHTML">{{icon "cart"}}<span class="buy__long">Masukkan </span>Keranjang</button>
+<button class="btn btn--primary" type="submit" form="purchase" formaction="/checkout" formmethod="get">Beli Sekarang</button>
 {{else}}
 <a class="btn btn--outline" href="{{.Data.LoginURL}}">{{icon "cart"}}<span class="buy__long">Masukkan </span>Keranjang</a>
+<a class="btn btn--primary" href="{{.Data.BuyNowLoginURL}}">Beli Sekarang</a>
 {{end}}
-{{/* Phase 5: Buy Now will check out cart.Service.Quote(variant, quantity)
-     directly, without storing the line in the cart. */}}
-<button class="btn btn--primary" type="button" disabled data-phase="5" title="Segera hadir">Beli Sekarang</button>
 {{end}}

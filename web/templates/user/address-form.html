@@ -10,6 +10,7 @@
 {{if .Data.Errors}}<div class="alert alert--error" role="alert">Periksa kembali isian yang ditandai.</div>{{end}}
 
 <form method="post" action="{{if .Data.ID}}/account/addresses/{{.Data.ID}}{{else}}/account/addresses{{end}}">
+  {{with .Data.Next}}<input type="hidden" name="next" value="{{.}}">{{end}}
   <section class="card">
     <h2 class="card__title form-section-title">Kontak</h2>
     {{template "field" (dict "ID" "recipient_name" "Name" "recipient_name" "Label" "Nama Penerima" "Value" .Data.Form.RecipientName

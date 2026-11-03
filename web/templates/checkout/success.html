@@ -1,0 +1,21 @@
+{{template "base" .}}
+
+{{define "title"}}Pesanan Dibuat · {{.App.Name}}{{end}}
+
+{{define "content"}}
+{{$o := .Data}}
+<div class="success">
+  <div class="success__icon">{{icon "check-circle"}}</div>
+  <h1 class="success__title">Pesanan berhasil dibuat</h1>
+  <p class="muted">Nomor pesanan</p>
+  <p class="success__number">{{$o.Number}}</p>
+  <dl class="co-summary success__summary">
+    <div><dt>{{$o.Quantity}} barang</dt><dd>{{rupiah $o.Subtotal}}</dd></div>
+    <div><dt>Ongkos Kirim</dt><dd class="muted">Belum dihitung</dd></div>
+    <div class="co-summary__total"><dt>Total Pesanan</dt><dd>{{rupiah $o.Total}}</dd></div>
+  </dl>
+  <div class="alert alert--info">Status: <strong>{{$o.Status.Label}}</strong>. Pembayaran online akan tersedia pada tahap berikutnya; pesanan Anda sudah tercatat.</div>
+  <a class="btn btn--primary btn--block" href="/account/orders/{{$o.Number}}">Lihat Pesanan</a>
+  <a class="btn btn--outline btn--block" href="/">Belanja Lagi</a>
+</div>
+{{end}}

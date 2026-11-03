@@ -1,0 +1,51 @@
+{{template "base" .}}
+
+{{define "title"}}Pesanan Saya · {{.App.Name}}{{end}}
+{{define "content"}}{{template "account-layout" .}}{{end}}
+{{define "account-title"}}Pesanan Saya{{end}}
+
+{{define "account-main"}}
+<nav class="order-tabs" aria-label="Status pesanan">
+  {{range .Data.Tabs}}<a class="order-tab{{if eq .Key $.Data.Result.Tab.Key}} is-active{{end}}" href="{{$.Data.TabURL .Key}}"{{if eq .Key $.Data.Result.Tab.Key}} aria-current="page"{{end}}>{{.Label}}</a>{{end}}
+</nav>
+{{if .Data.Result.Orders}}
+<div class="order-list">{{template "order-cards" .}}</div>
+{{else}}
+<div class="empty-state">
+  {{icon "receipt"}}
+  <h2>Belum ada pesanan{{if .Data.Result.Tab.Key}} {{.Data.Result.Tab.Label}}{{end}}</h2>
+  <p class="muted">Pesanan Anda akan tampil di sini.</p>
+  <a class="btn btn--primary" href="/">Mulai Belanja</a>
+</div>
+{{end}}
+{{end}}
+
+{{/* Order cards; HTMX "Muat lebih banyak" appends the next page. */}}
+{{define "order-cards"}}
+{{range .Data.Result.Orders}}
+<article class="order-card">
+  <div class="order-card__head">
+    <span class="order-card__brand">ASHANUM</span>
+    <span class="order-status order-status--{{.Status}}">{{.Status.Label}}</span>
+  </div>
+  <a class="order-card__item" href="/account/orders/{{.Number}}">
+    <img src="{{img .First.ImageURL 72}}" alt="" width="64" height="64" loading="lazy">
+    <span class="order-card__info">
+      <span class="order-card__name">{{.First.ProductName}}</span>
+      {{with .First.VariantLabel}}<span class="order-card__variant">{{.}}</span>{{end}}
+      <span class="order-card__qty">x{{.First.Quantity}}</span>
+    </span>
+    <span class="order-card__price">{{rupiah .First.UnitPrice}}</span>
+  </a>
+  {{if gt .ItemCount 1}}<p class="order-card__more">+{{sub .ItemCount 1}} produk lainnya</p>{{end}}
+  <div class="order-card__foot">
+    <span class="muted">{{.Number}} · {{datetime .CreatedAt}}</span>
+    <span>Total Pesanan <strong>{{rupiah .Total}}</strong></span>
+  </div>
+  <div class="order-card__actions"><a class="btn btn--outline" href="/account/orders/{{.Number}}">Detail Pesanan</a></div>
+</article>
+{{end}}
+{{if .Data.Result.HasNext}}
+<a id="orders-more" class="load-more" href="{{.Data.NextURL}}" hx-get="{{.Data.NextURL}}" hx-target="this" hx-swap="outerHTML">Muat lebih banyak</a>
+{{end}}
+{{end}}

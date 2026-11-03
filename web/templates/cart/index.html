@@ -93,9 +93,9 @@
       <span class="cart-bar__label">Total ({{$p.Summary.Quantity}} produk)</span>
       <strong class="cart-bar__amount">{{rupiah $p.Summary.Subtotal}}</strong>
     </div>
-    <button class="btn btn--primary cart-bar__checkout" type="button" disabled data-phase="5" title="Checkout segera hadir">Checkout</button>
+    <button class="btn btn--primary cart-bar__checkout" type="submit" formaction="/checkout"{{if not $p.Summary.Lines}} disabled{{end}}>Checkout{{if $p.Summary.Lines}} ({{$p.Summary.Lines}}){{end}}</button>
   </div>
-  <p class="cart-note">Checkout segera hadir. Harga dan stok akan dicek ulang saat checkout; keranjang tidak memesan stok.</p>
+  <p class="cart-note">Harga dan stok dicek ulang saat checkout; keranjang tidak memesan stok.</p>
   {{else}}
   <div class="empty-state">
     {{icon "cart"}}

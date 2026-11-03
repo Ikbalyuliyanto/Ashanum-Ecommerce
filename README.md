@@ -15,7 +15,7 @@ dilakukan per fase.
 | 2 | Authentication, user, profil, alamat | Selesai |
 | 3 | Kategori, produk, gambar, atribut, varian, storefront, pencarian | Selesai |
 | 4 | Cart, cart item, tambah/ubah/hapus, ringkasan, persiapan Buy Now | Selesai |
-| 5 | Checkout, order, shipping | Belum |
+| 5 | Checkout, order, snapshot alamat/produk, Beli Sekarang, riwayat & detail pesanan (shipping aggregator ditunda) | Selesai |
 | 6 | Midtrans, webhook, payment | Belum |
 | 7 | Riwayat order, review, return, refund | Belum |
 | 8 | Admin, dashboard, laporan, pengaturan | Belum |
@@ -99,8 +99,23 @@ placeholder nonaktif (`data-phase="4"`/`"5"`).
 | `POST /cart/clear` | Kosongkan keranjang |
 
 Semua route keranjang wajib login. Tamu yang menekan "Masukkan Keranjang" diarahkan ke
-login lalu kembali ke produk dengan varian dan jumlah yang sama. Checkout dan Beli Sekarang
-masih placeholder Phase 5 (`data-phase="5"`).
+login lalu kembali ke produk dengan varian dan jumlah yang sama.
+
+### Checkout & pesanan (Fase 5)
+
+| Route | Keterangan |
+|-------|------------|
+| `GET /checkout?item=<id>&item=…` | Checkout item keranjang yang dipilih |
+| `GET /checkout?variant_id=…&quantity=…` | Beli Sekarang (tanpa mengubah keranjang) |
+| `GET /checkout?…&address=<id>` | Ganti alamat (HTMX: hanya bagian checkout) |
+| `POST /checkout/order` | Buat pesanan (satu transaksi), lalu ke halaman sukses |
+| `GET /checkout/success/{nomor}` | Pesanan berhasil dibuat |
+| `GET /account/orders?status=unpaid\|processing\|shipped\|completed\|cancelled` | Pesanan Saya |
+| `GET /account/orders/{nomor}` | Rincian pesanan |
+
+Semua wajib login; pesanan dan item keranjang hanya bisa diakses pemiliknya.
+Pengiriman, voucher, dan pembayaran tampil sebagai "belum tersedia": ongkos kirim
+"Belum dihitung", total belum termasuk ongkir, pesanan dibuat berstatus Belum Bayar.
 
 ### Data demo (development)
 
@@ -144,6 +159,8 @@ internal/category/           kategori + cache memori daftar kategori aktif
 internal/product/            katalog: listing, pencarian, detail, varian, home sections
 internal/media/              aturan URL gambar (Cloudinary/data URI) + resize Cloudinary
 internal/cart/               keranjang: satu cart aktif per user, item per varian
+internal/checkout/           checkout & pembuatan pesanan (transaksi, stok, snapshot)
+internal/order/              Pesanan Saya: riwayat & rincian pesanan
 internal/validate/           aturan validasi input bersama (email, HP, nama, password)
 internal/database/dbgen/     kode hasil sqlc (jangan diedit manual)
 internal/testutil/           schema PostgreSQL terisolasi untuk test
@@ -229,6 +246,23 @@ item untuk checkout adalah state request (checkbox), tidak disimpan. Badge keran
 total quantity seluruh item (2 × A + 3 × B = 5), ditampilkan "99+" di atas 99.
 `cart.Service.Quote(variant, qty)` memvalidasi pembelian tanpa menyimpan apa pun —
 titik masuk "Beli Sekarang" di Phase 5.
+
+**Checkout & pesanan.** Server satu-satunya sumber kebenaran: browser hanya mengirim
+ID (item keranjang, varian, alamat), jumlah, total yang dilihat pengguna (untuk
+mendeteksi perubahan harga), dan kunci idempotensi. `checkout.Service.PlaceOrder` dalam
+**satu transaksi**: mengunci baris keranjang terpilih, mengunci varian dengan urutan id
+(mencegah deadlock), memvalidasi ulang ketersediaan/stok/jumlah dengan data terbaru,
+membandingkan total, lalu satu statement menulis `orders` + `order_items`, mengurangi
+stok dengan guard `stock >= qty`, dan menghapus hanya item keranjang yang dibeli. Gagal di
+titik mana pun → rollback total. Pembeli bersamaan untuk stok terakhir: hanya satu yang
+berhasil, sisanya mendapat "Stok produk berubah…". Kirim ulang form dengan kunci yang sama
+mengembalikan pesanan yang sama. Order menyimpan **snapshot** alamat dan setiap item
+(nama, SKU, varian, gambar, harga satuan) sehingga riwayat tidak berubah saat katalog atau
+alamat diubah/dihapus. Nomor pesanan `ASH-YYYYMMDD-NNNNNN` (tanggal WIB + sequence
+PostgreSQL; unik dan aman konkurensi, bukan primary key). Stok dikurangi saat pesanan
+dibuat dan **belum** dikembalikan jika pesanan tidak dibayar — pembatalan/kedaluwarsa
+pembayaran dikerjakan di Phase 6. Pembayaran akan berupa tabel `payments` dan pengiriman
+tabel `shipments` (kurir, layanan, ongkir, resi, estimasi) yang merujuk `orders.id`.
 
 **Gambar.** Database menyimpan URL, bukan file. `media.Valid` hanya menerima URL https
 Cloudinary atau data URI kecil (data demo); `{{img url lebar}}` meminta Cloudinary

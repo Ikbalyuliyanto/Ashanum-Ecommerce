@@ -72,6 +72,19 @@ func (p detailPage) CurrentURL() string { return p.QuantityURL(p.Quantity) }
 // LoginURL sends a guest to log in and come back to this exact choice.
 func (p detailPage) LoginURL() string { return "/login?next=" + url.QueryEscape(p.CurrentURL()) }
 
+// BuyNowLoginURL sends a guest to log in and continue straight to checkout
+// with the chosen variant and quantity.
+func (p detailPage) BuyNowLoginURL() string {
+	if p.Selection.Variant == nil {
+		return p.LoginURL()
+	}
+	next := "/checkout?" + url.Values{
+		"variant_id": {strconv.FormatInt(p.Selection.Variant.ID, 10)},
+		"quantity":   {strconv.Itoa(p.Quantity)},
+	}.Encode()
+	return "/login?next=" + url.QueryEscape(next)
+}
+
 // CanAddToCart is true when one in-stock variant is chosen.
 func (p detailPage) CanAddToCart() bool {
 	return p.Selection.Variant != nil && p.Selection.Variant.Stock > 0

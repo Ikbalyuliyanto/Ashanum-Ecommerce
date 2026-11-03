@@ -105,7 +105,7 @@ func TestProductDetailPage(t *testing.T) {
 	res := b.get("/products/kaos-ashanum-basic")
 	expect(t, res, http.StatusOK, "Kaos Ashanum Basic", "Rp129.000", "Warna", "Hitam", "Putih",
 		"Ukuran", "Deskripsi Produk", "Kaos katun combed.", "Pilih Warna, Ukuran",
-		`data-phase="5"`, "disabled")
+		"Beli Sekarang", "disabled")
 
 	var hitam, m int64
 	ctx := context.Background()

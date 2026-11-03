@@ -1,0 +1,127 @@
+{{template "base" .}}
+
+{{define "title"}}Checkout · {{.App.Name}}{{end}}
+{{define "body-class"}}page-checkout{{end}}
+
+{{define "content"}}
+<div class="checkout-page">
+  <div class="account__bar">
+    <a class="account__back" href="{{.Data.BackURL}}" aria-label="Kembali">{{icon "chevron-left"}}</a>
+    <h1 class="account__title">Checkout</h1>
+  </div>
+  {{template "checkout-body" .}}
+</div>
+{{end}}
+
+{{/* Hidden fields naming what is checked out: cart lines or Buy Now. */}}
+{{define "checkout-source"}}
+{{- if .BuyNow}}<input type="hidden" name="variant_id" value="{{.VariantID}}"><input type="hidden" name="quantity" value="{{.Quantity}}">
+{{- else}}{{range .CartItemIDs}}<input type="hidden" name="item" value="{{.}}">{{end}}{{end -}}
+{{end}}
+
+{{/* Single-page checkout. Every number here is computed by the server from
+     current data; the order form only carries IDs, the total the customer
+     saw (to detect price changes) and an idempotency key. */}}
+{{define "checkout-body"}}
+{{$p := .Data}}{{$d := $p.Draft}}
+<div id="checkout" class="checkout">
+  {{with $p.Warning}}<div class="alert alert--error" role="alert">{{.}}</div>{{end}}
+  {{if $d.Blocked}}<div class="alert alert--error" role="alert">Ada produk yang tidak dapat dipesan. Periksa tanda merah di bawah{{if not $d.Source.BuyNow}}, lalu ubah keranjang Anda{{end}}.</div>{{end}}
+
+  <section class="co-card" aria-labelledby="co-address">
+    <div class="co-card__head">
+      <h2 class="co-card__title" id="co-address">{{icon "map-pin"}} Alamat Pengiriman</h2>
+      {{if $d.Addresses}}
+      <details class="sheet">
+        <summary class="link-btn">{{if $d.Address}}Ubah{{else}}Pilih{{end}}</summary>
+        <div class="sheet__panel" role="dialog" aria-label="Pilih alamat pengiriman">
+          <p class="sheet__title">Pilih Alamat Pengiriman</p>
+          <form class="sheet__body" method="get" action="/checkout"
+                hx-get="/checkout" hx-trigger="change" hx-target="#checkout" hx-swap="outerHTML" hx-push-url="true">
+            {{template "checkout-source" $d.Source}}
+            {{range $d.Addresses}}
+            {{$on := and $d.Address (eq .ID $d.Address.ID)}}
+            <label class="addr-option{{if $on}} is-selected{{end}}">
+              <input type="radio" name="address" value="{{.ID}}"{{if $on}} checked{{end}}>
+              <span class="addr-option__body">
+                <span class="addr-option__top"><strong>{{.RecipientName}}</strong> <span class="muted">{{phone .Phone}}</span></span>
+                <span class="addr-option__line">{{.StreetAddress}}, {{.District}}, {{.City}}</span>
+                <span class="addr-option__tags"><span class="chip">{{.Label}}</span>{{if .IsPrimary}} <span class="badge">Utama</span>{{end}}</span>
+              </span>
+            </label>
+            {{end}}
+            <noscript><button class="btn btn--primary btn--block" type="submit">Gunakan alamat ini</button></noscript>
+          </form>
+          <a class="btn btn--dashed" href="{{$p.AddAddressURL}}">{{icon "plus"}}Tambah Alamat Baru</a>
+        </div>
+      </details>
+      {{end}}
+    </div>
+    {{with $d.Address}}
+    <p class="co-address__name">{{.RecipientName}} <span class="muted">| {{phone .Phone}}</span></p>
+    <p class="co-address__line">{{.StreetAddress}}</p>
+    <p class="co-address__region">{{.Village}}, {{.District}}, {{.City}}, {{.Province}}, {{.PostalCode}}</p>
+    <p class="co-address__tags"><span class="chip">{{.Label}}</span>{{if .IsPrimary}} <span class="badge">Utama</span>{{end}}</p>
+    {{else}}
+    <p class="muted">Belum ada alamat pengiriman.</p>
+    <a class="btn btn--outline" href="{{$p.AddAddressURL}}">{{icon "plus"}}Tambah Alamat</a>
+    {{end}}
+  </section>
+
+  <section class="co-card" aria-labelledby="co-items">
+    <h2 class="co-card__title" id="co-items">Produk Dipesan</h2>
+    <ul class="co-lines">
+      {{range $d.Lines}}
+      <li class="co-line{{if .Problem}} has-problem{{end}}">
+        <img class="co-line__img" src="{{img .ImageURL 72}}" alt="" width="64" height="64">
+        <div class="co-line__body">
+          <p class="co-line__name">{{if .ProductName}}{{.ProductName}}{{else}}Produk sudah dihapus{{end}}</p>
+          {{with .VariantLabel}}<p class="co-line__variant">Varian: {{.}}</p>{{end}}
+          {{if .ProductName}}<p class="co-line__price">{{rupiah .UnitPrice}} <span class="muted">× {{.Quantity}}</span></p>{{end}}
+          {{if eq .Problem "unavailable"}}<p class="co-line__problem">Produk tidak tersedia</p>
+          {{else if eq .Problem "out_of_stock"}}<p class="co-line__problem">Stok habis</p>
+          {{else if eq .Problem "insufficient_stock"}}<p class="co-line__problem">Stok tersedia hanya {{.Stock}}</p>
+          {{else if eq .Problem "invalid_quantity"}}<p class="co-line__problem">Jumlah tidak valid</p>{{end}}
+        </div>
+        {{if .ProductName}}<p class="co-line__subtotal">{{rupiah .Subtotal}}</p>{{end}}
+      </li>
+      {{end}}
+    </ul>
+  </section>
+
+  {{/* Shipping, vouchers and payment are later phases: shown as pending,
+       never as free or as a fake method. */}}
+  <section class="co-card co-pending" data-phase="shipping">
+    <h2 class="co-card__title">{{icon "truck"}} Pengiriman</h2>
+    <p class="muted">Belum tersedia. Kurir dan ongkos kirim akan ditentukan pada tahap pengiriman.</p>
+  </section>
+  <section class="co-card co-pending" data-phase="voucher">
+    <h2 class="co-card__title">{{icon "ticket"}} Voucher</h2>
+    <p class="muted">Belum tersedia.</p>
+  </section>
+  <section class="co-card co-pending" data-phase="6">
+    <h2 class="co-card__title">{{icon "wallet"}} Metode Pembayaran</h2>
+    <p class="muted">Pembayaran online akan tersedia pada tahap berikutnya. Pesanan dibuat dengan status <strong>Belum Bayar</strong>.</p>
+  </section>
+
+  <section class="co-card" aria-labelledby="co-summary">
+    <h2 class="co-card__title" id="co-summary">Rincian Pembayaran</h2>
+    <dl class="co-summary">
+      <div><dt>Subtotal Produk ({{$d.Quantity}} barang)</dt><dd>{{rupiah $d.Subtotal}}</dd></div>
+      <div><dt>Ongkos Kirim</dt><dd class="muted">Belum dihitung</dd></div>
+      <div><dt>Diskon</dt><dd class="muted">–</dd></div>
+      <div class="co-summary__total"><dt>Total Pesanan</dt><dd>{{rupiah $d.Total}}</dd></div>
+    </dl>
+    <p class="co-note">Total belum termasuk ongkos kirim.</p>
+  </section>
+
+  <form class="co-bar" method="post" action="/checkout/order">
+    {{template "checkout-source" $d.Source}}
+    {{with $d.Address}}<input type="hidden" name="address_id" value="{{.ID}}">{{end}}
+    <input type="hidden" name="expected_total" value="{{$d.Total}}">
+    <input type="hidden" name="key" value="{{$p.Key}}">
+    <div class="co-bar__total"><span>Total Pesanan</span><strong>{{rupiah $d.Total}}</strong></div>
+    <button class="btn btn--primary co-bar__submit" type="submit"{{if not $d.Ready}} disabled{{end}}>Buat Pesanan</button>
+  </form>
+</div>
+{{end}}

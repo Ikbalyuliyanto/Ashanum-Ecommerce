@@ -120,7 +120,7 @@ func (h *Handler) Add(w http.ResponseWriter, r *http.Request) {
 	if q := r.PostForm.Get("quantity"); q != "" {
 		quantity, _ = strconv.Atoi(strings.TrimSpace(q)) // invalid → 0 → refused
 	}
-	back := localPath(r.PostForm.Get("return_to"), "/cart")
+	back := view.SafePath(r.PostForm.Get("return_to"), "/cart")
 
 	res, err := h.svc.AddItem(r.Context(), p.UserID, variantID, quantity)
 	msg := Message(err)
@@ -232,16 +232,4 @@ func (h *Handler) render(w http.ResponseWriter, r *http.Request, status int, p p
 		return
 	}
 	h.view.Render(w, r, status, "cart/index", p)
-}
-
-// localPath accepts only same-site paths (no scheme, host or //).
-func localPath(s, fallback string) string {
-	if s == "" || !strings.HasPrefix(s, "/") || strings.HasPrefix(s, "//") || strings.HasPrefix(s, "/\\") ||
-		strings.ContainsAny(s, "\r\n\t") {
-		return fallback
-	}
-	if u, err := url.Parse(s); err != nil || u.IsAbs() || u.Host != "" {
-		return fallback
-	}
-	return s
 }

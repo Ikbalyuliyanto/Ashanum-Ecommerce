@@ -60,7 +60,7 @@ func TestCartRequiresLogin(t *testing.T) {
 	m := queryID(t, db, "SELECT id FROM product_attribute_values WHERE value = 'M'")
 	page := b.get(fmt.Sprintf("/products/kaos-ashanum-basic?o=%d,%d&q=2", hitam, m))
 	expect(t, page, http.StatusOK, "/login?next=%2Fproducts%2Fkaos-ashanum-basic%3Fo%3D")
-	if strings.Contains(page.body, `id="add-to-cart"`) {
+	if strings.Contains(page.body, `id="purchase"`) {
 		t.Error("guests must not get the add-to-cart form")
 	}
 }
@@ -78,9 +78,9 @@ func TestCartFlow(t *testing.T) {
 
 	// Product page: with a full choice the add-to-cart form appears.
 	page := alice.get(fmt.Sprintf("/products/kaos-ashanum-basic?o=%d,%d&q=2", hitam, m))
-	expect(t, page, http.StatusOK, `id="add-to-cart"`, fmt.Sprintf(`name="variant_id" value="%d"`, blkM),
-		`name="quantity" value="2"`, `data-phase="5"`)
-	if strings.Contains(alice.get("/products/kaos-ashanum-basic").body, `id="add-to-cart"`) {
+	expect(t, page, http.StatusOK, `id="purchase"`, fmt.Sprintf(`name="variant_id" value="%d"`, blkM),
+		`name="quantity" value="2"`, `formaction="/checkout" formmethod="get"`)
+	if strings.Contains(alice.get("/products/kaos-ashanum-basic").body, `id="purchase"`) {
 		t.Error("without a full choice there must be no add-to-cart form")
 	}
 
@@ -109,7 +109,7 @@ func TestCartFlow(t *testing.T) {
 	// Cart page: lines, variant label, total and badge without an extra query.
 	cart := alice.get("/cart")
 	expect(t, cart, http.StatusOK, "Kaos Ashanum Basic", "Varian: Hitam / M", "Tunik Polos 01",
-		"Total (4 produk)", "Rp438.000", `class="cart-badge">4<`, `data-phase="5"`)
+		"Total (4 produk)", "Rp438.000", `class="cart-badge">4<`, `formaction="/checkout"`, "Checkout (2)")
 	if cc := cart.header.Get("Cache-Control"); cc != "private, no-store" {
 		t.Errorf("cart Cache-Control = %q", cc)
 	}

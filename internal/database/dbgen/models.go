@@ -36,6 +36,47 @@ type Category struct {
 	UpdatedAt    time.Time
 }
 
+type Order struct {
+	ID             int64
+	OrderNumber    string
+	UserID         int64
+	IdempotencyKey *string
+	Status         string
+	Subtotal       int64
+	ShippingCost   int64
+	Discount       int64
+	Total          int64
+	AddressLabel   string
+	RecipientName  string
+	RecipientPhone string
+	Province       string
+	City           string
+	District       string
+	Village        string
+	PostalCode     string
+	Address        string
+	Latitude       *float64
+	Longitude      *float64
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+type OrderItem struct {
+	ID           int64
+	OrderID      int64
+	ProductID    *int64
+	VariantID    *int64
+	ProductName  string
+	ProductSlug  string
+	Sku          string
+	VariantLabel string
+	ImageUrl     string
+	UnitPrice    int64
+	Quantity     int32
+	Subtotal     int64
+	CreatedAt    time.Time
+}
+
 type Product struct {
 	ID            int64
 	CategoryID    int64
