@@ -31,10 +31,12 @@ func (r *Repository) List(ctx context.Context, userID int64, statuses []Status, 
 	out := make([]Summary, len(rows))
 	for i, row := range rows {
 		out[i] = Summary{
+			ID:        row.ID,
 			Number:    row.OrderNumber,
 			Status:    Status(row.Status),
 			Total:     row.Total,
 			CreatedAt: row.CreatedAt,
+			DueAt:     row.PaymentDueAt,
 			ItemCount: int(row.ItemCount),
 			First: Item{
 				ProductName:  row.ProductName,
@@ -66,6 +68,9 @@ func (r *Repository) Get(ctx context.Context, userID int64, number string) (Orde
 		Discount:     row.Discount,
 		Total:        row.Total,
 		CreatedAt:    row.CreatedAt,
+		PaymentDueAt: row.PaymentDueAt,
+		PaidAt:       row.PaidAt,
+		CancelledAt:  row.CancelledAt,
 		Address: Address{
 			Label:         row.AddressLabel,
 			RecipientName: row.RecipientName,
@@ -79,6 +84,9 @@ func (r *Repository) Get(ctx context.Context, userID int64, number string) (Orde
 			Latitude:      row.Latitude,
 			Longitude:     row.Longitude,
 		},
+	}
+	if row.CancelReason != nil {
+		o.CancelReason = *row.CancelReason
 	}
 	items, err := r.q.ListOrderItems(ctx, row.ID)
 	if err != nil {

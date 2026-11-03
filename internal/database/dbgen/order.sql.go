@@ -11,7 +11,7 @@ import (
 )
 
 const getOrder = `-- name: GetOrder :one
-SELECT id, order_number, user_id, idempotency_key, status, subtotal, shipping_cost, discount, total, address_label, recipient_name, recipient_phone, province, city, district, village, postal_code, address, latitude, longitude, created_at, updated_at FROM orders WHERE order_number = $1 AND user_id = $2
+SELECT id, order_number, user_id, idempotency_key, status, subtotal, shipping_cost, discount, total, address_label, recipient_name, recipient_phone, province, city, district, village, postal_code, address, latitude, longitude, created_at, updated_at, payment_due_at, paid_at, cancelled_at, cancel_reason, stock_restored_at FROM orders WHERE order_number = $1 AND user_id = $2
 `
 
 type GetOrderParams struct {
@@ -45,6 +45,11 @@ func (q *Queries) GetOrder(ctx context.Context, arg GetOrderParams) (Order, erro
 		&i.Longitude,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PaymentDueAt,
+		&i.PaidAt,
+		&i.CancelledAt,
+		&i.CancelReason,
+		&i.StockRestoredAt,
 	)
 	return i, err
 }
@@ -89,7 +94,7 @@ func (q *Queries) ListOrderItems(ctx context.Context, orderID int64) ([]OrderIte
 
 const listOrders = `-- name: ListOrders :many
 
-SELECT o.id, o.order_number, o.status, o.total, o.created_at,
+SELECT o.id, o.order_number, o.status, o.total, o.created_at, o.payment_due_at,
        (SELECT count(*) FROM order_items i WHERE i.order_id = o.id)::int AS item_count,
        fi.product_name, fi.variant_label, fi.image_url, fi.quantity, fi.unit_price
 FROM orders o
@@ -116,6 +121,7 @@ type ListOrdersRow struct {
 	Status       string
 	Total        int64
 	CreatedAt    time.Time
+	PaymentDueAt time.Time
 	ItemCount    int32
 	ProductName  string
 	VariantLabel string
@@ -147,6 +153,7 @@ func (q *Queries) ListOrders(ctx context.Context, arg ListOrdersParams) ([]ListO
 			&i.Status,
 			&i.Total,
 			&i.CreatedAt,
+			&i.PaymentDueAt,
 			&i.ItemCount,
 			&i.ProductName,
 			&i.VariantLabel,

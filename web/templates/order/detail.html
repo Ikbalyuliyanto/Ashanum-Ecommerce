@@ -9,12 +9,59 @@
 {{$o := .Data}}
 <section class="order-banner order-banner--{{$o.Status}}">
   <p class="order-banner__status">{{$o.Status.Label}}</p>
-  {{if eq $o.Status "WAITING_PAYMENT"}}<p class="order-banner__text">Menunggu pembayaran. Pembayaran online akan tersedia pada tahap berikutnya.</p>{{end}}
+  {{if eq $o.Status "WAITING_PAYMENT"}}
+  <p class="order-banner__text">{{if $o.PaymentFailed}}Pembayaran belum berhasil. Silakan coba kembali.{{else}}Menunggu pembayaran.{{end}} Bayar sebelum <strong>{{datetime $o.PaymentDueAt}}</strong>.</p>
+  {{else if eq $o.Status "WAITING_CONFIRMATION"}}
+  <p class="order-banner__text">Pembayaran diterima. Pesanan menunggu konfirmasi penjual.</p>
+  {{else if eq $o.Status "CANCELLED"}}
+  <p class="order-banner__text">{{$o.CancelReasonText}}</p>
+  {{end}}
 </section>
+
+{{if and (eq $o.Status "WAITING_PAYMENT") $o.Sandbox $o.PaymentEnabled}}
+<div class="alert alert--warning pay-sandbox">Mode uji <strong>Midtrans Sandbox</strong>: tidak ada uang sungguhan. Total belum termasuk ongkos kirim.</div>
+{{end}}
 
 <section class="card order-meta">
   <div><span class="muted">No. Pesanan</span><strong>{{$o.Number}}</strong></div>
   <div><span class="muted">Waktu Pemesanan</span><span>{{datetime $o.CreatedAt}}</span></div>
+  {{if eq $o.Status "WAITING_PAYMENT"}}<div><span class="muted">Batas Pembayaran</span><span>{{datetime $o.PaymentDueAt}}</span></div>{{end}}
+  {{with $o.PaidAt}}<div><span class="muted">Waktu Pembayaran</span><span>{{datetime .}}</span></div>{{end}}
+  {{with $o.CancelledAt}}<div><span class="muted">Waktu Pembatalan</span><span>{{datetime .}}</span></div>{{end}}
+</section>
+
+<section class="card pay-card" aria-labelledby="od-payment">
+  <h2 class="card__title form-section-title" id="od-payment">{{icon "wallet"}} Pembayaran</h2>
+  {{with $o.LastPayment}}
+  <dl class="co-summary">
+    <div><dt>Status</dt><dd><span class="pay-status pay-status--{{.Status}}">{{.Status.Label}}</span></dd></div>
+    <div><dt>Metode</dt><dd{{if not .Method}} class="muted"{{end}}>{{or .Method "Belum dipilih"}}</dd></div>
+    {{with .PaidAt}}<div><dt>Dibayar</dt><dd>{{datetime .}}</dd></div>{{end}}
+    {{if eq .Status "PENDING"}}<div><dt>Berlaku hingga</dt><dd>{{datetime .ExpiresAt}}</dd></div>{{end}}
+  </dl>
+  {{else}}
+  <p class="muted pay-card__empty">{{if eq $o.Status "WAITING_PAYMENT"}}Belum ada pembayaran.{{else}}Tidak ada pembayaran.{{end}}</p>
+  {{end}}
+  {{if gt (len $o.Payments) 1}}
+  <details class="pay-attempts">
+    <summary>Riwayat percobaan pembayaran ({{len $o.Payments}})</summary>
+    <ol>
+      {{range $o.Payments}}<li><span>Percobaan {{.No}}{{with .Method}} · {{.}}{{end}}</span><span class="pay-status pay-status--{{.Status}}">{{.Status.Label}}</span></li>{{end}}
+    </ol>
+  </details>
+  {{end}}
+  {{if $o.CanCancel}}
+  <details class="sheet pay-cancel">
+    <summary class="link-btn link-btn--danger">Batalkan Pesanan</summary>
+    <div class="sheet__panel" role="dialog" aria-label="Batalkan pesanan">
+      <p class="sheet__title">Batalkan pesanan ini?</p>
+      <p class="muted">Pesanan {{$o.Number}} akan dibatalkan dan tidak dapat dibayar lagi. Untuk membeli produk yang sama, buat pesanan baru.</p>
+      <form method="post" action="/account/orders/{{$o.Number}}/cancel">
+        <button class="btn btn--danger btn--block" type="submit">Ya, Batalkan Pesanan</button>
+      </form>
+    </div>
+  </details>
+  {{end}}
 </section>
 
 <section class="card" aria-labelledby="od-address">
@@ -53,4 +100,18 @@
     <div class="co-summary__total"><dt>Total Pesanan</dt><dd>{{rupiah $o.Total}}</dd></div>
   </dl>
 </section>
+
+{{if eq $o.Status "WAITING_PAYMENT"}}
+<div class="co-bar od-bar">
+  <div class="co-bar__total"><span>Total Pembayaran</span><strong>{{rupiah $o.Total}}</strong></div>
+  {{if $o.CanPay}}
+  <form method="post" action="/account/orders/{{$o.Number}}/pay">
+    <button class="btn btn--primary co-bar__submit" type="submit">{{$o.PayLabel}}</button>
+  </form>
+  {{else}}
+  <button class="btn btn--primary co-bar__submit" type="button" disabled title="Pembayaran online belum tersedia">{{$o.PayLabel}}</button>
+  {{end}}
+</div>
+{{if not $o.PaymentEnabled}}<p class="co-note">Pembayaran online belum tersedia.</p>{{end}}
+{{end}}
 {{end}}

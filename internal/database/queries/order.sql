@@ -3,7 +3,7 @@
 -- ListOrders is the order history: one row per order with its first item
 -- and line count, newest first. An empty statuses array means all.
 -- name: ListOrders :many
-SELECT o.id, o.order_number, o.status, o.total, o.created_at,
+SELECT o.id, o.order_number, o.status, o.total, o.created_at, o.payment_due_at,
        (SELECT count(*) FROM order_items i WHERE i.order_id = o.id)::int AS item_count,
        fi.product_name, fi.variant_label, fi.image_url, fi.quantity, fi.unit_price
 FROM orders o

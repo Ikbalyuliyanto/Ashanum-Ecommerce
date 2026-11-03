@@ -4,11 +4,15 @@
 //	ecommerce serve           start the web server
 //	ecommerce migrate         apply pending database migrations
 //	ecommerce migrate status  list migrations and when they were applied
+//	ecommerce reconcile-payments [-limit N]
+//	                          sync pending payments with the provider, expire
+//	                          overdue unpaid orders, list payments to review
 //	ecommerce version         print the build version
 package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -19,6 +23,8 @@ import (
 	"ecommerce/internal/auth"
 	"ecommerce/internal/config"
 	"ecommerce/internal/database"
+	"ecommerce/internal/payment"
+	"ecommerce/internal/payment/midtrans"
 	"ecommerce/internal/server"
 	"ecommerce/internal/view"
 	"ecommerce/web"
@@ -58,8 +64,10 @@ func run(args []string) error {
 		return serve(ctx, cfg, log)
 	case "migrate":
 		return migrate(ctx, cfg, log, args)
+	case "reconcile-payments":
+		return reconcilePayments(ctx, cfg, log, args)
 	default:
-		return fmt.Errorf("unknown command %q (want serve, migrate, version)", cmd)
+		return fmt.Errorf("unknown command %q (want serve, migrate, reconcile-payments, version)", cmd)
 	}
 }
 
@@ -92,13 +100,19 @@ func serve(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		log.Warn("SESSION_SECRET not set: using a random one, sessions end on restart")
 	}
 
-	handler := server.NewRouter(server.Deps{
+	deps := server.Deps{
 		Config: cfg,
 		Log:    log,
 		DB:     db,
 		View:   renderer,
 		Assets: assets,
-	})
+	}
+	if mt, err := paymentProvider(cfg, log); err != nil {
+		return err
+	} else if mt != nil {
+		deps.PaymentProvider, deps.CheckoutOrigin = mt, mt.CheckoutOrigin()
+	}
+	handler := server.NewRouter(deps)
 
 	log.Info("starting", "version", version, "env", cfg.Env)
 	return server.Run(ctx, cfg.Addr(), handler, log)
@@ -134,6 +148,53 @@ func migrate(ctx context.Context, cfg *config.Config, log *slog.Logger, args []s
 	default:
 		return fmt.Errorf("unknown migrate command %q (want up, status)", sub)
 	}
+}
+
+// paymentProvider returns the Midtrans sandbox client, or nil when
+// MIDTRANS_SERVER_KEY is not set (online payment disabled).
+func paymentProvider(cfg *config.Config, log *slog.Logger) (*midtrans.Client, error) {
+	if !cfg.Midtrans.Enabled() {
+		log.Warn("MIDTRANS_SERVER_KEY not set: online payment disabled")
+		return nil, nil
+	}
+	log.Warn("payments use the Midtrans SANDBOX: order totals exclude shipping cost; never accept real payments yet")
+	return midtrans.New(midtrans.Config{Env: cfg.Midtrans.Env, ServerKey: cfg.Midtrans.ServerKey})
+}
+
+// reconcilePayments runs one reconciliation pass (see payment.Service.Reconcile).
+// It holds no state between runs: call it from a systemd timer or by hand.
+func reconcilePayments(ctx context.Context, cfg *config.Config, log *slog.Logger, args []string) error {
+	fs := flag.NewFlagSet("reconcile-payments", flag.ContinueOnError)
+	limit := fs.Int("limit", 100, "maximum rows per step")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	db, err := database.Open(ctx, cfg.Database)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	var provider payment.Provider
+	if mt, err := paymentProvider(cfg, log); err != nil {
+		return err
+	} else if mt != nil {
+		provider = mt
+	}
+	svc := payment.NewService(payment.NewRepository(db), provider, payment.Options{BaseURL: cfg.BaseURL, Log: log})
+	rep, err := svc.Reconcile(ctx, max(*limit, 1))
+	if err != nil {
+		return err
+	}
+	fmt.Printf("pending checked: %d, updated: %d, orders expired: %d, errors: %d, needs review: %d\n",
+		rep.Checked, rep.Updated, rep.Expired, rep.Errors, len(rep.Review))
+	for _, it := range rep.Review {
+		fmt.Printf("REVIEW %s %s %s (%s): %s\n", it.OrderNumber, it.ProviderOrderID, it.Status, it.ProviderStatus, it.Reason)
+	}
+	if rep.Errors > 0 {
+		return fmt.Errorf("reconcile-payments: %d error(s), see log", rep.Errors)
+	}
+	return nil
 }
 
 // webFS returns the embedded templates/static in production. In development

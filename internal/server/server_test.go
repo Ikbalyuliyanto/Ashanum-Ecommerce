@@ -13,6 +13,7 @@ import (
 
 	"ecommerce/internal/auth"
 	"ecommerce/internal/config"
+	"ecommerce/internal/payment"
 	"ecommerce/internal/view"
 	"ecommerce/web"
 )
@@ -25,6 +26,12 @@ func newTestRouter(t *testing.T) http.Handler {
 
 // buildRouter uses the embedded templates/static, exactly like production.
 func buildRouter(t *testing.T, db *pgxpool.Pool, env string) http.Handler {
+	return buildRouterWith(t, db, env, nil, "")
+}
+
+// buildRouterWith also sets the payment provider (nil: payments disabled)
+// and its checkout origin.
+func buildRouterWith(t *testing.T, db *pgxpool.Pool, env string, provider payment.Provider, checkoutOrigin string) http.Handler {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	tpl, _ := fs.Sub(web.FS, "templates")
@@ -45,11 +52,14 @@ func buildRouter(t *testing.T, db *pgxpool.Pool, env string) http.Handler {
 		t.Fatal(err)
 	}
 	return NewRouter(Deps{
-		Config: &config.Config{Env: env, Session: config.Session{Secret: []byte("0123456789abcdef0123456789abcdef")}},
-		Log:    log,
-		DB:     db,
-		View:   renderer,
-		Assets: assets,
+		Config: &config.Config{Env: env, Session: config.Session{Secret: []byte("0123456789abcdef0123456789abcdef")},
+			Midtrans: config.Midtrans{Env: config.MidtransSandbox}},
+		Log:             log,
+		DB:              db,
+		View:            renderer,
+		Assets:          assets,
+		PaymentProvider: provider,
+		CheckoutOrigin:  checkoutOrigin,
 	})
 }
 

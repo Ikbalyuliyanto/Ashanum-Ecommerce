@@ -1,5 +1,6 @@
 // Package order reads orders: history ("Pesanan Saya") and order detail.
-// Orders are created by package checkout. Every order is a snapshot, so
+// Orders are created by package checkout; payment, cancellation and expiry
+// of unpaid orders belong to package payment. Every order is a snapshot, so
 // history stays correct when addresses or the catalog change later. The
 // Service has no HTTP dependency, so a future API can reuse it.
 package order
@@ -7,6 +8,8 @@ package order
 import (
 	"errors"
 	"time"
+
+	"ecommerce/internal/payment"
 )
 
 var ErrNotFound = errors.New("order: not found")
@@ -109,6 +112,57 @@ type Order struct {
 	Address      Address
 	Items        []Item
 	CreatedAt    time.Time
+
+	PaymentDueAt time.Time  // pay before this, or the order is cancelled
+	PaidAt       *time.Time // payment confirmed by the provider
+	CancelledAt  *time.Time
+	CancelReason string // USER_CANCELLED | PAYMENT_EXPIRED
+
+	Payments       []payment.Attempt // oldest first
+	PaymentEnabled bool              // online payment is configured
+	Sandbox        bool              // test payments only
+}
+
+// LastPayment is the latest payment attempt, or nil.
+func (o Order) LastPayment() *payment.Attempt {
+	if len(o.Payments) == 0 {
+		return nil
+	}
+	return &o.Payments[len(o.Payments)-1]
+}
+
+// CanPay reports whether the buyer can pay now ("Bayar Sekarang").
+func (o Order) CanPay() bool {
+	return o.Status == StatusWaitingPayment && o.PaymentEnabled && time.Now().Before(o.PaymentDueAt)
+}
+
+// CanCancel reports whether the buyer can still cancel (unpaid orders only).
+func (o Order) CanCancel() bool { return o.Status == StatusWaitingPayment }
+
+// PaymentFailed reports an unpaid order whose latest attempt did not take
+// money (declined, failed, expired): the buyer may pay again.
+func (o Order) PaymentFailed() bool {
+	last := o.LastPayment()
+	return o.Status == StatusWaitingPayment && last != nil && last.Status.Unsuccessful()
+}
+
+// PayLabel is the pay button text.
+func (o Order) PayLabel() string {
+	if o.PaymentFailed() {
+		return "Bayar Lagi"
+	}
+	return "Bayar Sekarang"
+}
+
+// CancelReasonText explains a cancellation to the buyer.
+func (o Order) CancelReasonText() string {
+	switch o.CancelReason {
+	case "USER_CANCELLED":
+		return "Pesanan dibatalkan oleh Anda."
+	case "PAYMENT_EXPIRED":
+		return "Pesanan dibatalkan otomatis karena batas waktu pembayaran habis."
+	}
+	return "Pesanan dibatalkan."
 }
 
 // Quantity is the total number of units in the order.
@@ -122,10 +176,12 @@ func (o Order) Quantity() int {
 
 // Summary is one order card in the history.
 type Summary struct {
+	ID        int64
 	Number    string
 	Status    Status
 	Total     int64
 	CreatedAt time.Time
+	DueAt     time.Time // payment deadline (unpaid orders)
 	ItemCount int
 	First     Item // first line, shown on the card
 }

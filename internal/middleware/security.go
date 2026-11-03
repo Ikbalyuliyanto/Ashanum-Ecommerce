@@ -3,11 +3,12 @@ package middleware
 import (
 	"net"
 	"net/http"
+	"strings"
 )
 
 // contentSecurityPolicy allows only same-origin scripts and styles, so
 // templates must not use inline <script>, inline style="" or hx-on.
-// Later phases extend it for external services (e.g. Midtrans Snap).
+// form-action is completed by SecureHeaders (see formActions there).
 const contentSecurityPolicy = "default-src 'self'; " +
 	"script-src 'self'; " +
 	"style-src 'self'; " +
@@ -16,16 +17,28 @@ const contentSecurityPolicy = "default-src 'self'; " +
 	"connect-src 'self'; " +
 	"object-src 'none'; " +
 	"base-uri 'self'; " +
-	"form-action 'self'; " +
-	"frame-ancestors 'none'"
+	"frame-ancestors 'none'; " +
+	"form-action 'self'"
 
 // SecureHeaders sets browser security headers on every response. HSTS is only
 // sent in production, where the site is always reached over HTTPS.
-func SecureHeaders(production bool) func(http.Handler) http.Handler {
+//
+// formActions are extra origins forms may submit to, including redirects
+// after a submit: the "Bayar Sekarang" form answers 303 to the payment
+// provider's hosted checkout (Midtrans Snap redirect mode), which browsers
+// check against form-action. Nothing else is relaxed: no provider script,
+// frame or connect origin is needed in redirect mode.
+func SecureHeaders(production bool, formActions ...string) func(http.Handler) http.Handler {
+	csp := contentSecurityPolicy
+	for _, o := range formActions {
+		if o != "" && !strings.ContainsAny(o, "; '*") {
+			csp += " " + o
+		}
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			h := w.Header()
-			h.Set("Content-Security-Policy", contentSecurityPolicy)
+			h.Set("Content-Security-Policy", csp)
 			h.Set("X-Content-Type-Options", "nosniff")
 			h.Set("X-Frame-Options", "DENY")
 			h.Set("Referrer-Policy", "strict-origin-when-cross-origin")

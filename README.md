@@ -16,7 +16,7 @@ dilakukan per fase.
 | 3 | Kategori, produk, gambar, atribut, varian, storefront, pencarian | Selesai |
 | 4 | Cart, cart item, tambah/ubah/hapus, ringkasan, persiapan Buy Now | Selesai |
 | 5 | Checkout, order, snapshot alamat/produk, Beli Sekarang, riwayat & detail pesanan (shipping aggregator ditunda) | Selesai |
-| 6 | Midtrans, webhook, payment | Belum |
+| 6 | Pembayaran Midtrans Snap (**sandbox saja**), webhook, kedaluwarsa & pembatalan pesanan, pengembalian stok, reconcile | Selesai |
 | 7 | Riwayat order, review, return, refund | Belum |
 | 8 | Admin, dashboard, laporan, pengaturan | Belum |
 | 9 | Security review, optimasi, load testing, deployment HG680P | Belum |
@@ -48,6 +48,7 @@ semuanya dibaca dari binary (embed).
 | `ecommerce` / `ecommerce serve` | Jalankan web server |
 | `ecommerce migrate` | Terapkan migrasi yang belum dijalankan |
 | `ecommerce migrate status` | Daftar migrasi dan waktu diterapkan |
+| `ecommerce reconcile-payments [-limit N]` | Sinkronkan pembayaran pending dengan Midtrans, batalkan pesanan lewat batas bayar (stok kembali), daftar pembayaran yang perlu ditinjau |
 | `ecommerce version` | Versi build |
 
 `Makefile` menyediakan pintasan (`make run`, `make test`, `make build-arm64`, ...).
@@ -117,6 +118,35 @@ Semua wajib login; pesanan dan item keranjang hanya bisa diakses pemiliknya.
 Pengiriman, voucher, dan pembayaran tampil sebagai "belum tersedia": ongkos kirim
 "Belum dihitung", total belum termasuk ongkir, pesanan dibuat berstatus Belum Bayar.
 
+### Pembayaran (Fase 6)
+
+> **Sandbox saja.** `shipping_cost` masih 0 sehingga total pesanan belum termasuk ongkos
+> kirim. `MIDTRANS_ENV` selain `sandbox` ditolak saat startup. Pembayaran produksi baru
+> boleh diaktifkan setelah integrasi pengiriman, validasi total final, dan review
+> pembayaran produksi selesai.
+
+| Route | Keterangan |
+|-------|------------|
+| `POST /account/orders/{nomor}/pay` | Bayar Sekarang: buat/pakai ulang attempt, 303 ke halaman Midtrans Snap |
+| `POST /account/orders/{nomor}/cancel` | Batalkan pesanan belum bayar (stok dikembalikan) |
+| `GET /account/orders/{nomor}/payment/finish` | Kembali dari Midtrans: cek status ke Midtrans, tampilkan hasil |
+| `POST /webhooks/midtrans` | HTTP Notification Midtrans (publik, tanpa sesi, wajib signature) |
+
+Pengaturan Midtrans Sandbox (dashboard sandbox → Settings → Payment):
+
+- **Notification URL**: `https://<domain>/webhooks/midtrans`
+- **Finish Redirect URL** tidak wajib: aplikasi mengirim `callbacks.finish` sendiri
+  (`APP_BASE_URL` + `/account/orders/{nomor}/payment/finish`).
+- `.env`: `MIDTRANS_ENV=sandbox`, `MIDTRANS_SERVER_KEY=SB-Mid-server-…`, `APP_BASE_URL`.
+  Tanpa server key, tombol bayar tampil "Pembayaran online belum tersedia".
+
+Di development, Midtrans tidak bisa mengirim notifikasi ke `127.0.0.1`; halaman finish
+dan `reconcile-payments` menanyakan status langsung ke Midtrans sehingga alur tetap jalan.
+
+`reconcile-payments` tidak menyimpan state dan aman dijalankan berulang. Belum ada
+scheduler terpasang; nanti bisa dipanggil systemd timer (mis. tiap 15 menit) dengan
+`EnvironmentFile` yang sama seperti service.
+
 ### Data demo (development)
 
 ```bash
@@ -132,7 +162,12 @@ jika sudah ada produk. Tool ini tidak ikut masuk binary produksi.
 ```bash
 go test ./...                                   # unit test; test database di-skip
 TEST_DATABASE_URL=postgres://user:pass@127.0.0.1:5432/ecommerce_test?sslmode=disable go test ./...
+# opsional, butuh internet + server key sandbox (variabel terpisah dari konfigurasi app):
+MIDTRANS_SANDBOX_SERVER_KEY=SB-Mid-server-... go test -run Sandbox -v ./internal/payment/midtrans/
 ```
+
+Test pembayaran memakai provider tiruan dan server Midtrans tiruan di memori
+(`internal/payment/midtrans/midtranstest`), tanpa internet.
 
 Dengan `TEST_DATABASE_URL`, setiap test membuat schema PostgreSQL sendiri (`test_xxxx`),
 menjalankan migrasi, lalu menghapusnya. Gunakan database khusus test, jangan database produksi.
@@ -160,7 +195,9 @@ internal/product/            katalog: listing, pencarian, detail, varian, home s
 internal/media/              aturan URL gambar (Cloudinary/data URI) + resize Cloudinary
 internal/cart/               keranjang: satu cart aktif per user, item per varian
 internal/checkout/           checkout & pembuatan pesanan (transaksi, stok, snapshot)
-internal/order/              Pesanan Saya: riwayat & rincian pesanan
+internal/order/              Pesanan Saya: riwayat & rincian pesanan, halaman hasil pembayaran
+internal/payment/            pembayaran: attempt, webhook, status, batal/kedaluwarsa, stok kembali, reconcile
+internal/payment/midtrans/   klien Midtrans (Snap redirect + Core API status) dengan net/http, sandbox saja
 internal/validate/           aturan validasi input bersama (email, HP, nama, password)
 internal/database/dbgen/     kode hasil sqlc (jangan diedit manual)
 internal/testutil/           schema PostgreSQL terisolasi untuk test
@@ -260,9 +297,40 @@ mengembalikan pesanan yang sama. Order menyimpan **snapshot** alamat dan setiap 
 (nama, SKU, varian, gambar, harga satuan) sehingga riwayat tidak berubah saat katalog atau
 alamat diubah/dihapus. Nomor pesanan `ASH-YYYYMMDD-NNNNNN` (tanggal WIB + sequence
 PostgreSQL; unik dan aman konkurensi, bukan primary key). Stok dikurangi saat pesanan
-dibuat dan **belum** dikembalikan jika pesanan tidak dibayar — pembatalan/kedaluwarsa
-pembayaran dikerjakan di Phase 6. Pembayaran akan berupa tabel `payments` dan pengiriman
-tabel `shipments` (kurir, layanan, ongkir, resi, estimasi) yang merujuk `orders.id`.
+dibuat dan dikembalikan saat pesanan belum bayar dibatalkan atau lewat batas bayar (lihat
+Pembayaran). Pengiriman akan berupa tabel `shipments` (kurir, layanan, ongkir, resi,
+estimasi) yang merujuk `orders.id`.
+
+**Pembayaran.** Midtrans Snap mode **redirect**: "Bayar Sekarang" → 303 ke halaman
+pembayaran Midtrans, jadi tidak ada script Midtrans di halaman kita dan client key tidak
+dipakai. Satu pesanan boleh punya beberapa *attempt* (`payments`), tetapi paling banyak
+satu `PENDING` dan satu `PAID` (partial unique index); tiap attempt punya
+`provider_order_id` sendiri `ASH-YYYYMMDD-NNNNNN-P<n>` yang tidak pernah dipakai ulang.
+Nominal selalu `orders.total` (ongkir/diskon kelak masuk ke order lebih dulu). Klik ganda
+memakai attempt pending yang sama (mutex per pesanan + constraint database). Sumber
+kebenaran adalah Midtrans, bukan browser: webhook diterima hanya dengan signature
+`SHA512(order_id + status_code + gross_amount + server key)` yang valid, lalu statusnya
+**diambil ulang lewat Get Status API**; halaman finish juga hanya bertanya ke Midtrans.
+Status Midtrans diterjemahkan di `internal/payment/midtrans` ke `PENDING | PAID | FAILED |
+DENIED | CANCELLED | EXPIRED`; hanya attempt `PENDING` yang boleh berubah, status
+terminal final. PAID → pesanan `WAITING_CONFIRMATION` (bukan `PROCESSING`), tanpa
+mengubah stok. Nominal provider ≠ attempt ≠ `orders.total`, pembayaran setelah attempt
+ditutup, atau refund/chargeback **tidak** diterapkan otomatis: ditandai `review_reason`
+dan muncul di `reconcile-payments`. Semua transisi berjalan dalam transaksi yang
+mengunci `orders` lebih dulu, lalu `payments`, lalu varian berurutan id (sama dengan
+checkout); `payment_events` mencatat jejak audit (tanpa token/kunci).
+
+**Batas bayar & stok.** `orders.payment_due_at` = waktu pesan + 24 jam; setiap attempt
+kedaluwarsa pada waktu yang sama. Pesanan belum bayar yang dibatalkan pembeli atau lewat
+batas bayar menjadi `CANCELLED` dan stoknya dikembalikan **sekali** (dijaga
+`stock_restored_at`, idempoten untuk cancel ganda, webhook expire ganda, dan reconcile).
+Kedaluwarsa dijalankan lazy saat halaman pesanan dibuka, oleh webhook expire, dan oleh
+`reconcile-payments`; transaksi yang mungkin masih terbuka di Midtrans dicek/dibatalkan
+di Midtrans dulu (tenggang 5 menit), dan jika Midtrans tidak bisa dihubungi pesanan
+dibiarkan untuk percobaan berikutnya. Pembayaran gagal/ditolak/kedaluwarsa sebelum batas
+bayar → tombol "Bayar Lagi" membuat attempt baru (maks. 10); pesanan yang sudah
+dibatalkan tidak pernah dihidupkan lagi — pembeli membuat pesanan baru. Varian yang
+dipegang pesanan belum bayar tidak bisa dihapus (trigger database); nonaktifkan saja.
 
 **Gambar.** Database menyimpan URL, bukan file. `media.Valid` hanya menerima URL https
 Cloudinary atau data URI kecil (data demo); `{{img url lebar}}` meminta Cloudinary
@@ -287,6 +355,11 @@ Taruh CSS di `web/static/css/` dan JS di `web/static/js/`.
 PATCH/DELETE lintas origin dari browser ditolak `403`. Tidak perlu token di form.
 Webhook server-ke-server (Midtrans) tetap lolos dan wajib memverifikasi signature.
 
+**CSP & pembayaran.** Satu-satunya perubahan CSP Fase 6: `form-action` ditambah origin
+halaman pembayaran (`https://app.sandbox.midtrans.com`), hanya jika server key diisi,
+karena form "Bayar Sekarang" di-redirect ke sana. `script-src`, `connect-src`,
+`frame-src` tidak diubah; tidak ada `unsafe-inline`, `unsafe-eval`, atau `*`.
+
 ## Deployment ke HG680P
 
 Build di mesin development:
@@ -295,7 +368,7 @@ Build di mesin development:
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o ecommerce ./cmd/web
 ```
 
-Hasilnya satu file ELF statis (~12 MB) yang sudah berisi template, CSS, JS, dan migrasi.
+Hasilnya satu file ELF statis (~14 MB) yang sudah berisi template, CSS, JS, dan migrasi.
 
 Persiapan sekali di perangkat (Armbian):
 

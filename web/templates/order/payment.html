@@ -1,0 +1,48 @@
+{{template "base" .}}
+
+{{define "title"}}Status Pembayaran · {{.App.Name}}{{end}}
+
+{{/* Shown when the buyer returns from the payment provider. It reflects the
+     database after a provider status check, never the redirect parameters. */}}
+{{define "content"}}
+{{$o := .Data}}
+<div class="success pay-result">
+  {{if eq $o.Status "WAITING_CONFIRMATION"}}
+  <div class="success__icon">{{icon "check-circle"}}</div>
+  <h1 class="success__title">Pembayaran Berhasil</h1>
+  {{else if eq $o.Status "CANCELLED"}}
+  <div class="success__icon pay-result__icon--muted">{{icon "x-circle"}}</div>
+  <h1 class="success__title">Pesanan Dibatalkan</h1>
+  <p class="muted">{{$o.CancelReasonText}}</p>
+  {{else if $o.PaymentFailed}}
+  <div class="success__icon pay-result__icon--danger">{{icon "alert-circle"}}</div>
+  <h1 class="success__title">Pembayaran Belum Berhasil</h1>
+  <p class="muted">Pembayaran belum berhasil. Silakan coba kembali.</p>
+  {{else}}
+  <div class="success__icon pay-result__icon--pending">{{icon "clock"}}</div>
+  <h1 class="success__title">Menunggu Pembayaran</h1>
+  <p class="muted">Selesaikan pembayaran sesuai instruksi di halaman Midtrans. Status pesanan diperbarui otomatis setelah pembayaran kami terima.</p>
+  {{end}}
+
+  <p class="muted">Nomor Pesanan</p>
+  <p class="success__number">{{$o.Number}}</p>
+  <dl class="co-summary success__summary">
+    <div><dt>Status</dt><dd><strong>{{$o.Status.Label}}</strong></dd></div>
+    {{with $o.LastPayment}}{{with .Method}}<div><dt>Metode</dt><dd>{{.}}</dd></div>{{end}}{{end}}
+    {{with $o.PaidAt}}<div><dt>Dibayar</dt><dd>{{datetime .}}</dd></div>{{end}}
+    {{if eq $o.Status "WAITING_PAYMENT"}}<div><dt>Bayar sebelum</dt><dd>{{datetime $o.PaymentDueAt}}</dd></div>{{end}}
+    <div class="co-summary__total"><dt>Total</dt><dd>{{rupiah $o.Total}}</dd></div>
+  </dl>
+  {{if and (eq $o.Status "WAITING_PAYMENT") $o.Sandbox}}<div class="alert alert--warning">Mode uji Midtrans Sandbox: tidak ada uang sungguhan. Total belum termasuk ongkos kirim.</div>{{end}}
+
+  {{if $o.CanPay}}
+  <form method="post" action="/account/orders/{{$o.Number}}/pay">
+    <button class="btn btn--primary btn--block" type="submit">{{$o.PayLabel}}</button>
+  </form>
+  <a class="btn btn--outline btn--block" href="/account/orders/{{$o.Number}}">Lihat Pesanan</a>
+  {{else}}
+  <a class="btn btn--primary btn--block" href="/account/orders/{{$o.Number}}">Lihat Pesanan</a>
+  <a class="btn btn--outline btn--block" href="/">{{if eq $o.Status "CANCELLED"}}Belanja Lagi{{else}}Kembali Belanja{{end}}</a>
+  {{end}}
+</div>
+{{end}}

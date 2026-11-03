@@ -72,3 +72,25 @@ func (h *Handler) Detail(w http.ResponseWriter, r *http.Request) {
 	}
 	h.view.Render(w, r, http.StatusOK, "order/detail", o)
 }
+
+// PaymentFinish is where the payment provider sends the buyer back. Its
+// query parameters (status etc.) are ignored: the order is refreshed from
+// the provider and the page shows what the database now says.
+func (h *Handler) PaymentFinish(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.FromContext(r.Context())
+	o, err := h.svc.Sync(r.Context(), p.UserID, chi.URLParam(r, "number"))
+	if errors.Is(err, ErrNotFound) {
+		h.view.Error(w, r, http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		h.view.ServerError(w, r, err)
+		return
+	}
+	switch o.Status {
+	case StatusWaitingPayment, StatusWaitingConfirmation, StatusCancelled:
+		h.view.Render(w, r, http.StatusOK, "order/payment", o)
+	default:
+		http.Redirect(w, r, "/account/orders/"+url.PathEscape(o.Number), http.StatusSeeOther)
+	}
+}

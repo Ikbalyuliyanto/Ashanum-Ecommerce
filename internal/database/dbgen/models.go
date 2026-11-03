@@ -37,28 +37,33 @@ type Category struct {
 }
 
 type Order struct {
-	ID             int64
-	OrderNumber    string
-	UserID         int64
-	IdempotencyKey *string
-	Status         string
-	Subtotal       int64
-	ShippingCost   int64
-	Discount       int64
-	Total          int64
-	AddressLabel   string
-	RecipientName  string
-	RecipientPhone string
-	Province       string
-	City           string
-	District       string
-	Village        string
-	PostalCode     string
-	Address        string
-	Latitude       *float64
-	Longitude      *float64
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID              int64
+	OrderNumber     string
+	UserID          int64
+	IdempotencyKey  *string
+	Status          string
+	Subtotal        int64
+	ShippingCost    int64
+	Discount        int64
+	Total           int64
+	AddressLabel    string
+	RecipientName   string
+	RecipientPhone  string
+	Province        string
+	City            string
+	District        string
+	Village         string
+	PostalCode      string
+	Address         string
+	Latitude        *float64
+	Longitude       *float64
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	PaymentDueAt    time.Time
+	PaidAt          *time.Time
+	CancelledAt     *time.Time
+	CancelReason    *string
+	StockRestoredAt *time.Time
 }
 
 type OrderItem struct {
@@ -75,6 +80,40 @@ type OrderItem struct {
 	Quantity     int32
 	Subtotal     int64
 	CreatedAt    time.Time
+}
+
+type Payment struct {
+	ID                    int64
+	OrderID               int64
+	AttemptNo             int32
+	Provider              string
+	ProviderOrderID       string
+	ProviderTransactionID *string
+	Amount                int64
+	Status                string
+	PaymentType           *string
+	SnapToken             *string
+	SnapRedirectUrl       *string
+	ProviderStatus        *string
+	FraudStatus           *string
+	ReviewReason          *string
+	ExpiresAt             time.Time
+	PaidAt                *time.Time
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
+}
+
+type PaymentEvent struct {
+	ID             int64
+	OrderID        int64
+	PaymentID      *int64
+	Source         string
+	Kind           string
+	FromStatus     *string
+	ToStatus       *string
+	ProviderStatus *string
+	Detail         string
+	CreatedAt      time.Time
 }
 
 type Product struct {

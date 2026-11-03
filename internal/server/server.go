@@ -21,6 +21,7 @@ import (
 	"ecommerce/internal/home"
 	"ecommerce/internal/middleware"
 	"ecommerce/internal/order"
+	"ecommerce/internal/payment"
 	"ecommerce/internal/product"
 	"ecommerce/internal/user"
 	"ecommerce/internal/view"
@@ -32,6 +33,12 @@ type Deps struct {
 	DB     *pgxpool.Pool
 	View   *view.Renderer
 	Assets *view.Assets
+
+	// PaymentProvider is nil when online payment is not configured.
+	PaymentProvider payment.Provider
+	// CheckoutOrigin is the provider's hosted checkout origin, allowed in
+	// the CSP form-action (the pay form redirects there).
+	CheckoutOrigin string
 }
 
 // NewRouter is the composition root: it builds repositories, services and
@@ -43,7 +50,12 @@ func NewRouter(d Deps) http.Handler {
 	categorySvc := category.NewService(category.NewRepository(d.DB))
 	productSvc := product.NewService(product.NewRepository(d.DB))
 	cartSvc := cart.NewService(cart.NewRepository(d.DB))
-	orderSvc := order.NewService(order.NewRepository(d.DB))
+	paymentSvc := payment.NewService(payment.NewRepository(d.DB), d.PaymentProvider, payment.Options{
+		BaseURL: d.Config.BaseURL,
+		Sandbox: d.Config.Midtrans.Env == config.MidtransSandbox,
+		Log:     d.Log,
+	})
+	orderSvc := order.NewService(order.NewRepository(d.DB), paymentSvc)
 	checkoutSvc := checkout.NewService(checkout.NewRepository(d.DB), addressSvc)
 
 	// Header cart badge on full pages for signed-in users (one small query).
@@ -59,6 +71,7 @@ func NewRouter(d Deps) http.Handler {
 		return n
 	})
 
+	paymentH := payment.NewHandler(paymentSvc, d.View, d.Log)
 	authH := auth.NewHandler(authSvc, d.View, auth.NewCookieConfig(d.Config.IsProduction()), d.Log)
 
 	r := chi.NewRouter()
@@ -69,7 +82,7 @@ func NewRouter(d Deps) http.Handler {
 		middleware.Recover(d.Log, func(w http.ResponseWriter, req *http.Request) {
 			d.View.Error(w, req, http.StatusInternalServerError)
 		}),
-		middleware.SecureHeaders(d.Config.IsProduction()),
+		middleware.SecureHeaders(d.Config.IsProduction(), d.CheckoutOrigin),
 		middleware.CSRF(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			d.View.Error(w, req, http.StatusForbidden)
 		})),
@@ -92,6 +105,7 @@ func NewRouter(d Deps) http.Handler {
 	category.NewHandler(categorySvc, d.View).Routes(r)
 	product.NewHandler(productSvc, categorySvc, d.View).Routes(r)
 	authH.Routes(r)
+	paymentH.WebhookRoutes(r)
 
 	r.Group(func(r chi.Router) {
 		r.Use(auth.RequireUser)
@@ -100,6 +114,7 @@ func NewRouter(d Deps) http.Handler {
 		cart.NewHandler(cartSvc, d.View).Routes(r)
 		checkout.NewHandler(checkoutSvc, cartSvc, orderSvc, d.View).Routes(r)
 		order.NewHandler(orderSvc, d.View).Routes(r)
+		paymentH.Routes(r)
 	})
 
 	return r

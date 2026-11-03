@@ -42,7 +42,10 @@
     <span class="muted">{{.Number}} · {{datetime .CreatedAt}}</span>
     <span>Total Pesanan <strong>{{rupiah .Total}}</strong></span>
   </div>
-  <div class="order-card__actions"><a class="btn btn--outline" href="/account/orders/{{.Number}}">Detail Pesanan</a></div>
+  <div class="order-card__actions">
+    {{if eq .Status "WAITING_PAYMENT"}}<span class="order-card__due">Bayar sebelum {{datetime .DueAt}}</span>{{end}}
+    <a class="btn {{if eq .Status "WAITING_PAYMENT"}}btn--primary{{else}}btn--outline{{end}}" href="/account/orders/{{.Number}}">{{if eq .Status "WAITING_PAYMENT"}}Bayar Sekarang{{else}}Detail Pesanan{{end}}</a>
+  </div>
 </article>
 {{end}}
 {{if .Data.Result.HasNext}}

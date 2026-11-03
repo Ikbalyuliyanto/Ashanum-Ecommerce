@@ -1542,3 +1542,41 @@ body.page-checkout .main { padding-bottom: var(--space-4); }
 .order-banner__text { margin: var(--space-1) 0 0; font-size: 0.875rem; opacity: 0.92; }
 .order-meta { display: grid; gap: var(--space-2); font-size: 0.875rem; }
 .order-meta div { display: flex; justify-content: space-between; gap: var(--space-3); }
+
+/* ================= Payments (Phase 6) ================= */
+
+.alert--warning { background: #fff8e6; border-color: #f2d58c; color: #7a5200; }
+.btn--danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn--danger:hover { background: #912018; border-color: #912018; color: #fff; }
+
+.pay-sandbox { margin-bottom: var(--space-3); }
+.pay-card { display: grid; gap: var(--space-3); }
+.pay-card .form-section-title { margin-bottom: 0; }
+.pay-card__empty { margin: 0; font-size: 0.875rem; }
+.pay-cancel { justify-self: start; }
+.pay-cancel > summary { padding-left: 0; }
+.pay-cancel .sheet__panel p { margin: 0; font-size: 0.875rem; }
+
+.pay-status { font-weight: 700; color: var(--brand); }
+.pay-status--PAID { color: var(--success); }
+.pay-status--FAILED,
+.pay-status--DENIED { color: var(--danger); }
+.pay-status--CANCELLED,
+.pay-status--EXPIRED { color: var(--muted); }
+
+.pay-attempts { font-size: 0.8125rem; }
+.pay-attempts > summary { color: var(--brand); font-weight: 600; cursor: pointer; }
+.pay-attempts ol { display: grid; gap: var(--space-1); margin: var(--space-2) 0 0; padding: 0; list-style: none; }
+.pay-attempts li { display: flex; justify-content: space-between; gap: var(--space-3); }
+
+.od-bar { margin-top: var(--space-3); }
+.od-bar form { margin: 0; }
+
+.order-card__actions { align-items: center; gap: var(--space-3); }
+.order-card__due { min-width: 0; margin-right: auto; color: var(--muted); font-size: 0.75rem; }
+.order-card__actions .btn { flex: none; white-space: nowrap; }
+
+.pay-result__icon--pending .icon { color: var(--brand); }
+.pay-result__icon--danger .icon { color: var(--danger); }
+.pay-result__icon--muted .icon { color: var(--muted); }
+.pay-result form { margin: 0; }

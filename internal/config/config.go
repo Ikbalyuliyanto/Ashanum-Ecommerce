@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -26,8 +27,13 @@ type Config struct {
 	Port int
 	Name string
 
+	// BaseURL is the public site URL without a trailing slash, e.g.
+	// https://ashanum.example; payment providers redirect buyers back to it.
+	BaseURL string
+
 	Database Database
 	Session  Session
+	Midtrans Midtrans
 }
 
 type Database struct {
@@ -44,6 +50,20 @@ type Session struct {
 	Ephemeral bool
 }
 
+// Midtrans is the payment provider configuration. Only the sandbox is
+// allowed: order totals do not include shipping cost yet, so real-money
+// payments stay off until shipping integration and a production payment
+// review are done. The server key is used by the backend only.
+type Midtrans struct {
+	Env       string
+	ServerKey string
+}
+
+const MidtransSandbox = "sandbox"
+
+// Enabled reports whether online payment is configured.
+func (m Midtrans) Enabled() bool { return m.ServerKey != "" }
+
 // minSessionSecret is the minimum SESSION_SECRET length (bytes).
 const minSessionSecret = 32
 
@@ -59,10 +79,15 @@ func Load() (*Config, error) {
 
 	var errs []error
 	cfg := &Config{
-		Env:  getString("APP_ENV", EnvDevelopment),
-		Host: getString("APP_HOST", "127.0.0.1"),
-		Port: getInt("APP_PORT", 8080, &errs),
-		Name: getString("APP_NAME", "Ashanum"),
+		Env:     getString("APP_ENV", EnvDevelopment),
+		Host:    getString("APP_HOST", "127.0.0.1"),
+		Port:    getInt("APP_PORT", 8080, &errs),
+		Name:    getString("APP_NAME", "Ashanum"),
+		BaseURL: strings.TrimRight(getString("APP_BASE_URL", ""), "/"),
+		Midtrans: Midtrans{
+			Env:       getString("MIDTRANS_ENV", MidtransSandbox),
+			ServerKey: getString("MIDTRANS_SERVER_KEY", ""),
+		},
 		Database: Database{
 			URL:      getString("DATABASE_URL", ""),
 			MaxConns: int32(getInt("DB_MAX_CONNS", 10, &errs)),
@@ -86,6 +111,8 @@ func Load() (*Config, error) {
 		errs = append(errs, errors.New("DB_MIN_CONNS must be between 0 and DB_MAX_CONNS"))
 	}
 
+	errs = append(errs, cfg.validatePayments()...)
+
 	switch secret := getString("SESSION_SECRET", ""); {
 	case secret != "" && len(secret) < minSessionSecret:
 		errs = append(errs, fmt.Errorf("SESSION_SECRET must be at least %d characters", minSessionSecret))
@@ -103,6 +130,34 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("config: %w", err)
 	}
 	return cfg, nil
+}
+
+// validatePayments checks MIDTRANS_* and APP_BASE_URL. Error messages never
+// include the server key.
+func (c *Config) validatePayments() []error {
+	var errs []error
+	if c.Midtrans.Env != MidtransSandbox {
+		errs = append(errs, fmt.Errorf("MIDTRANS_ENV must be %q: production payments stay disabled until shipping cost is part of the order total and the production payment review is done", MidtransSandbox))
+	}
+	if k := c.Midtrans.ServerKey; k != "" && !strings.HasPrefix(k, "SB-Mid-server-") {
+		errs = append(errs, errors.New("MIDTRANS_SERVER_KEY must be a sandbox server key (SB-Mid-server-...)"))
+	}
+
+	if c.BaseURL == "" {
+		if c.IsProduction() && c.Midtrans.Enabled() {
+			errs = append(errs, errors.New("APP_BASE_URL is required in production when payments are enabled"))
+		}
+		c.BaseURL = "http://" + c.Addr()
+		return errs
+	}
+	u, err := url.Parse(c.BaseURL)
+	switch {
+	case err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || (u.Path != "" && u.Path != "/") || u.RawQuery != "":
+		errs = append(errs, fmt.Errorf("APP_BASE_URL must be an absolute URL such as https://shop.example, got %q", c.BaseURL))
+	case c.IsProduction() && u.Scheme != "https":
+		errs = append(errs, errors.New("APP_BASE_URL must use https in production"))
+	}
+	return errs
 }
 
 func getString(key, def string) string {

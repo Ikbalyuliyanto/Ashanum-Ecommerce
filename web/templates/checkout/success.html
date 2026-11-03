@@ -14,8 +14,21 @@
     <div><dt>Ongkos Kirim</dt><dd class="muted">Belum dihitung</dd></div>
     <div class="co-summary__total"><dt>Total Pesanan</dt><dd>{{rupiah $o.Total}}</dd></div>
   </dl>
-  <div class="alert alert--info">Status: <strong>{{$o.Status.Label}}</strong>. Pembayaran online akan tersedia pada tahap berikutnya; pesanan Anda sudah tercatat.</div>
+  {{if eq $o.Status "WAITING_PAYMENT"}}
+  <div class="alert alert--info">Status: <strong>{{$o.Status.Label}}</strong>. Selesaikan pembayaran sebelum <strong>{{datetime $o.PaymentDueAt}}</strong>; setelah itu pesanan dibatalkan otomatis.</div>
+  {{if and $o.Sandbox $o.PaymentEnabled}}<div class="alert alert--warning">Mode uji Midtrans Sandbox: tidak ada uang sungguhan. Total belum termasuk ongkos kirim.</div>{{end}}
+  {{else}}
+  <div class="alert alert--info">Status: <strong>{{$o.Status.Label}}</strong>.</div>
+  {{end}}
+  {{if $o.CanPay}}
+  <form method="post" action="/account/orders/{{$o.Number}}/pay">
+    <button class="btn btn--primary btn--block" type="submit">{{$o.PayLabel}}</button>
+  </form>
+  <a class="btn btn--outline btn--block" href="/account/orders/{{$o.Number}}">Lihat Pesanan</a>
+  {{else}}
+  {{if and (eq $o.Status "WAITING_PAYMENT") (not $o.PaymentEnabled)}}<p class="muted">Pembayaran online belum tersedia.</p>{{end}}
   <a class="btn btn--primary btn--block" href="/account/orders/{{$o.Number}}">Lihat Pesanan</a>
+  {{end}}
   <a class="btn btn--outline btn--block" href="/">Belanja Lagi</a>
 </div>
 {{end}}
