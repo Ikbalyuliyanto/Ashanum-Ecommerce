@@ -42,6 +42,20 @@ type Option struct {
 
 func (s Selection) DiscountPercent() int { return discountPercent(s.PriceMin, s.OriginalPrice) }
 
+// ChosenIDs returns the chosen value IDs, sorted.
+func (s Selection) ChosenIDs() []int64 {
+	var ids []int64
+	for _, g := range s.Groups {
+		for _, o := range g.Options {
+			if o.Selected {
+				ids = append(ids, o.ValueID)
+			}
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids
+}
+
 // Missing lists the attributes that still need a choice.
 func (s Selection) Missing() []string {
 	var names []string

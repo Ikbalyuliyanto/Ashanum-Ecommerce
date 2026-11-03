@@ -51,17 +51,13 @@
 </section>
 {{end}}
 
-{{/* Cart and checkout are Phase 4/5: buttons are disabled placeholders. */}}
-<div class="buy-bar" data-phase="4">
-  <button class="btn btn--outline" type="button" disabled>{{icon "cart"}} Keranjang</button>
-  <button class="btn btn--primary" type="button" disabled>Beli Sekarang</button>
-</div>
 {{end}}
 
-{{/* Price, options and stock. Option chips are links; HTMX swaps only
-     this panel and updates the URL. */}}
+{{/* Price, options, quantity and purchase buttons. Option chips and the
+     quantity stepper are links (?o=…&q=…); HTMX swaps only this panel. Add to
+     cart is a normal form post that HTMX upgrades. Buy Now is Phase 5. */}}
 {{define "product-buy"}}
-{{$s := .Data.Selection}}
+{{$s := .Data.Selection}}{{$d := .Data}}
 <div id="product-buy" class="buy">
   <div class="price-box">
     <p class="price-box__now">{{rupiah $s.PriceMin}}{{if gt $s.PriceMax $s.PriceMin}} – {{rupiah $s.PriceMax}}{{end}}</p>
@@ -83,11 +79,18 @@
   {{end}}
 
   <div class="qty">
-    <span class="qty__label">Kuantitas</span>
-    <div class="qty__stepper" aria-disabled="true">
-      <button type="button" disabled aria-label="Kurangi">{{icon "minus"}}</button>
-      <input type="number" value="1" min="1" disabled aria-label="Jumlah">
-      <button type="button" disabled aria-label="Tambah">{{icon "plus"}}</button>
+    <span class="qty__label" id="qty-label">Kuantitas</span>
+    <div class="qty__stepper">
+      {{if gt $d.Quantity 1}}
+      <a class="qty__btn" href="{{$d.QuantityURL (sub $d.Quantity 1)}}" hx-get="{{$d.QuantityURL (sub $d.Quantity 1)}}"
+         hx-target="#product-buy" hx-swap="outerHTML" hx-replace-url="true" rel="nofollow" aria-label="Kurangi">{{icon "minus"}}</a>
+      {{else}}<span class="qty__btn is-disabled" aria-hidden="true">{{icon "minus"}}</span>{{end}}
+      <input class="qty__input" form="add-to-cart" type="number" name="quantity" value="{{$d.Quantity}}"
+             min="1" max="{{$d.MaxQuantity}}" inputmode="numeric" aria-labelledby="qty-label">
+      {{if lt $d.Quantity $d.MaxQuantity}}
+      <a class="qty__btn" href="{{$d.QuantityURL (add $d.Quantity 1)}}" hx-get="{{$d.QuantityURL (add $d.Quantity 1)}}"
+         hx-target="#product-buy" hx-swap="outerHTML" hx-replace-url="true" rel="nofollow" aria-label="Tambah">{{icon "plus"}}</a>
+      {{else}}<span class="qty__btn is-disabled" aria-hidden="true">{{icon "plus"}}</span>{{end}}
     </div>
     <span class="qty__stock">
       {{- if $s.Variant}}{{if gt $s.Stock 0}}Stok tersisa {{$s.Stock}}{{else}}Stok habis{{end}}
@@ -96,10 +99,34 @@
     </span>
   </div>
 
-  <div class="buy__actions" data-phase="4">
-    <button class="btn btn--outline" type="button" disabled>{{icon "cart"}} Masukkan Keranjang</button>
-    <button class="btn btn--primary" type="button" disabled>Beli Sekarang</button>
-  </div>
-  <p class="buy__note">Pembelian online segera hadir.{{with $s.Variant}} <span class="muted">SKU {{.SKU}}</span>{{end}}</p>
+  {{if and .User $d.CanAddToCart}}
+  <form id="add-to-cart" method="post" action="/cart/items"
+        hx-post="/cart/items" hx-target="#cart-feedback" hx-swap="innerHTML">
+    <input type="hidden" name="variant_id" value="{{$s.Variant.ID}}">
+    <input type="hidden" name="return_to" value="{{$d.CurrentURL}}">
+  </form>
+  {{end}}
+
+  <div class="buy__actions">{{template "buy-buttons" .}}</div>
+  <div id="cart-feedback" class="buy__feedback" aria-live="polite"></div>
+  <p class="buy__note">
+    {{- if not $d.CanAddToCart}}{{if $s.Variant}}Stok varian ini habis.{{else}}Pilih varian untuk menambahkan ke keranjang.{{end}} {{end -}}
+    Beli Sekarang segera hadir.{{with $s.Variant}} <span class="muted">SKU {{.SKU}}</span>{{end}}</p>
+
+  {{/* Mobile sticky purchase bar; inside the panel so it follows the choice. */}}
+  <div class="buy-bar">{{template "buy-buttons" .}}</div>
 </div>
+{{end}}
+
+{{define "buy-buttons"}}
+{{if not .Data.CanAddToCart}}
+<button class="btn btn--outline" type="button" disabled>{{icon "cart"}}<span class="buy__long">Masukkan </span>Keranjang</button>
+{{else if .User}}
+<button class="btn btn--outline" type="submit" form="add-to-cart">{{icon "cart"}}<span class="buy__long">Masukkan </span>Keranjang</button>
+{{else}}
+<a class="btn btn--outline" href="{{.Data.LoginURL}}">{{icon "cart"}}<span class="buy__long">Masukkan </span>Keranjang</a>
+{{end}}
+{{/* Phase 5: Buy Now will check out cart.Service.Quote(variant, quantity)
+     directly, without storing the line in the cart. */}}
+<button class="btn btn--primary" type="button" disabled data-phase="5" title="Segera hadir">Beli Sekarang</button>
 {{end}}

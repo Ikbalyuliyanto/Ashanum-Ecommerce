@@ -1,0 +1,118 @@
+{{template "base" .}}
+
+{{define "title"}}Keranjang · {{.App.Name}}{{end}}
+{{define "body-class"}}page-cart{{end}}
+
+{{define "content"}}
+<div class="cart-page">
+  <div class="account__bar">
+    <a class="account__back" href="/" aria-label="Kembali ke beranda">{{icon "chevron-left"}}</a>
+    <h1 class="account__title">Keranjang</h1>
+  </div>
+  {{template "cart-body" .}}
+</div>
+{{end}}
+
+{{/* The whole cart is one GET form: checkboxes ("item") are the selection,
+     sent back to /cart (HTMX re-renders this block on change; without
+     JavaScript use the "Hitung ulang" button). Quantity and delete buttons
+     post to their own endpoints with formaction, keeping the selection. */}}
+{{define "cart-body"}}
+{{$p := .Data}}
+<form id="cart" class="cart" method="get" action="/cart"
+      hx-get="/cart" hx-trigger="change" hx-target="#cart" hx-swap="outerHTML">
+  <input type="hidden" name="sel" value="1">
+  {{with $p.Error}}<div class="alert alert--error" role="alert">{{.}}</div>{{end}}
+  {{with $p.Notice}}<div class="alert alert--success" role="status">{{.}}</div>{{end}}
+
+  {{if $p.Cart.Items}}
+  <div class="cart-head">
+    <a class="select-all{{if $p.AllSelected}} is-checked{{end}}" href="{{$p.ToggleAllURL}}"
+       hx-get="{{$p.ToggleAllURL}}" hx-target="#cart" hx-swap="outerHTML"
+       role="checkbox" aria-checked="{{if $p.AllSelected}}true{{else}}false{{end}}">Pilih Semua ({{$p.Selectable}})</a>
+    <button class="link-btn link-btn--danger" type="submit" formaction="/cart/clear" formmethod="post"
+            hx-post="/cart/clear" hx-target="#cart" hx-swap="outerHTML" hx-confirm="Kosongkan semua isi keranjang?">Hapus Semua</button>
+  </div>
+
+  <div class="cart-list">
+    {{range $p.Cart.Items}}
+    <article class="cart-item{{if not .Checkoutable}} is-blocked{{end}}">
+      <input class="cart-item__check" type="checkbox" name="item" value="{{.ID}}"
+             {{- if $p.IsSelected .ID}} checked{{end}}{{if not .Checkoutable}} disabled{{end}}
+             aria-label="Pilih {{if .ProductName}}{{.ProductName}}{{else}}produk{{end}}">
+      <div class="cart-item__media">
+        {{- if .ProductSlug}}<a href="/products/{{.ProductSlug}}"><img src="{{img .ImageURL 96}}" alt="" width="80" height="80" loading="lazy"></a>
+        {{- else}}<img src="{{img "" 96}}" alt="" width="80" height="80">{{end -}}
+      </div>
+      <div class="cart-item__body">
+        {{if .ProductSlug}}<a class="cart-item__name" href="/products/{{.ProductSlug}}">{{.ProductName}}</a>
+        {{- else}}<p class="cart-item__name">Produk sudah dihapus</p>{{end}}
+        {{with .VariantLabel}}<p class="cart-item__variant">Varian: {{.}}</p>{{end}}
+
+        {{if eq .Status "unavailable"}}
+        <p class="cart-item__status">Produk tidak tersedia</p>
+        {{else}}
+        <p class="cart-item__price">{{rupiah .Price}}{{if .DiscountPercent}} <s>{{rupiah .OriginalPrice}}</s>{{end}}</p>
+        {{if eq .Status "out_of_stock"}}<p class="cart-item__status">Stok habis</p>{{end}}
+        {{if eq .Status "insufficient_stock"}}
+        <p class="cart-item__status">Stok tersedia hanya {{.Stock}}.
+          <button class="link-btn" type="submit" formaction="/cart/items/{{.ID}}" formmethod="post" name="quantity" value="{{.Stock}}"
+                  hx-post="/cart/items/{{.ID}}" hx-target="#cart" hx-swap="outerHTML">Ubah jumlah ke {{.Stock}}</button></p>
+        {{end}}
+        {{end}}
+
+        <div class="cart-item__actions">
+          {{if or (eq .Status "available") (eq .Status "insufficient_stock")}}
+          <div class="stepper" role="group" aria-label="Jumlah">
+            <button class="stepper__btn" type="submit" formaction="/cart/items/{{.ID}}" formmethod="post"
+                    name="quantity" value="{{sub .Quantity 1}}" hx-post="/cart/items/{{.ID}}" hx-target="#cart" hx-swap="outerHTML"
+                    {{- if le .Quantity 1}} disabled{{end}} aria-label="Kurangi">{{icon "minus"}}</button>
+            <span class="stepper__value">{{.Quantity}}</span>
+            <button class="stepper__btn" type="submit" formaction="/cart/items/{{.ID}}" formmethod="post"
+                    name="quantity" value="{{add .Quantity 1}}" hx-post="/cart/items/{{.ID}}" hx-target="#cart" hx-swap="outerHTML"
+                    {{- if ge .Quantity .MaxQuantity}} disabled{{end}} aria-label="Tambah">{{icon "plus"}}</button>
+          </div>
+          {{else}}
+          <span class="cart-item__qty">Jumlah {{.Quantity}}</span>
+          {{end}}
+          <button class="link-btn link-btn--danger" type="submit" formaction="/cart/items/{{.ID}}/delete" formmethod="post"
+                  hx-post="/cart/items/{{.ID}}/delete" hx-target="#cart" hx-swap="outerHTML"
+                  hx-confirm="Hapus produk ini dari keranjang?">{{icon "trash"}}Hapus</button>
+        </div>
+      </div>
+    </article>
+    {{end}}
+  </div>
+  <noscript><button class="btn btn--block cart-recalc" type="submit">Hitung ulang total</button></noscript>
+
+  <div class="cart-bar">
+    <a class="select-all{{if $p.AllSelected}} is-checked{{end}}" href="{{$p.ToggleAllURL}}"
+       hx-get="{{$p.ToggleAllURL}}" hx-target="#cart" hx-swap="outerHTML"
+       role="checkbox" aria-checked="{{if $p.AllSelected}}true{{else}}false{{end}}">Semua</a>
+    <div class="cart-bar__total">
+      <span class="cart-bar__label">Total ({{$p.Summary.Quantity}} produk)</span>
+      <strong class="cart-bar__amount">{{rupiah $p.Summary.Subtotal}}</strong>
+    </div>
+    <button class="btn btn--primary cart-bar__checkout" type="button" disabled data-phase="5" title="Checkout segera hadir">Checkout</button>
+  </div>
+  <p class="cart-note">Checkout segera hadir. Harga dan stok akan dicek ulang saat checkout; keranjang tidak memesan stok.</p>
+  {{else}}
+  <div class="empty-state">
+    {{icon "cart"}}
+    <h2>Keranjang masih kosong</h2>
+    <p class="muted">Yuk, temukan produk favorit Anda.</p>
+    <a class="btn btn--primary" href="/">Mulai Belanja</a>
+  </div>
+  {{end}}
+</form>
+{{if $p.Partial}}{{template "cart-badge" (dict "ID" "cart-badge" "Count" $p.Cart.Quantity "OOB" true)}}{{end}}
+{{end}}
+
+{{/* Reply to "add to cart" from the product page (HTMX). */}}
+{{define "cart-feedback"}}
+<div class="toast toast--{{.Data.Kind}}" role="status">
+  {{if eq .Data.Kind "success"}}{{icon "check-circle"}}{{end}}<span>{{.Data.Message}}</span>
+  {{if eq .Data.Kind "success"}}<a class="toast__link" href="/cart">Lihat Keranjang</a>{{end}}
+</div>
+{{if eq .Data.Kind "success"}}{{template "cart-badge" (dict "ID" "cart-badge" "Count" .Data.CartQuantity "OOB" true)}}{{end}}
+{{end}}

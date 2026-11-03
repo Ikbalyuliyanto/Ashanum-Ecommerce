@@ -25,27 +25,60 @@ func NewHandler(svc *Service, categories *category.Service, v *view.Renderer) *H
 	return &Handler{svc: svc, categories: categories, view: v}
 }
 
+// maxCartQuantity mirrors cart.MaxQuantity (the per-line limit); the cart
+// service enforces it, this only bounds the quantity picker.
+const maxCartQuantity = 99
+
 type detailPage struct {
 	Product   Detail
 	Selection Selection
 	Related   []Card
+	// Quantity is the picker value (?q=), within 1..MaxQuantity.
+	Quantity    int
+	MaxQuantity int
 }
 
-// OptionURL links to this product with a set of chosen option values.
-func (p detailPage) OptionURL(valueIDs []int64) string {
+// URL links to this product with chosen option values and a quantity.
+func (p detailPage) URL(valueIDs []int64, quantity int) string {
+	v := url.Values{}
+	if len(valueIDs) > 0 {
+		parts := make([]string, len(valueIDs))
+		for i, id := range valueIDs {
+			parts[i] = strconv.FormatInt(id, 10)
+		}
+		v.Set("o", strings.Join(parts, ","))
+	}
+	if quantity > 1 {
+		v.Set("q", strconv.Itoa(quantity))
+	}
 	u := "/products/" + p.Product.Slug
-	if len(valueIDs) == 0 {
-		return u
+	if enc := v.Encode(); enc != "" {
+		u += "?" + enc
 	}
-	parts := make([]string, len(valueIDs))
-	for i, id := range valueIDs {
-		parts[i] = strconv.FormatInt(id, 10)
-	}
-	return u + "?o=" + strings.Join(parts, ",")
+	return u
 }
 
-// Detail renders /products/{slug}. Option chips are plain links (?o=…);
-// with HTMX only the purchase panel is swapped.
+// OptionURL changes the option choice, keeping the quantity.
+func (p detailPage) OptionURL(valueIDs []int64) string { return p.URL(valueIDs, p.Quantity) }
+
+// QuantityURL changes the quantity, keeping the option choice.
+func (p detailPage) QuantityURL(quantity int) string {
+	return p.URL(p.Selection.ChosenIDs(), quantity)
+}
+
+// CurrentURL is this page with the current choice (login return target).
+func (p detailPage) CurrentURL() string { return p.QuantityURL(p.Quantity) }
+
+// LoginURL sends a guest to log in and come back to this exact choice.
+func (p detailPage) LoginURL() string { return "/login?next=" + url.QueryEscape(p.CurrentURL()) }
+
+// CanAddToCart is true when one in-stock variant is chosen.
+func (p detailPage) CanAddToCart() bool {
+	return p.Selection.Variant != nil && p.Selection.Variant.Stock > 0
+}
+
+// Detail renders /products/{slug}. Option chips and the quantity stepper are
+// plain links (?o=…&q=…); with HTMX only the purchase panel is swapped.
 func (h *Handler) Detail(w http.ResponseWriter, r *http.Request) {
 	d, err := h.svc.Detail(r.Context(), chi.URLParam(r, "slug"))
 	if errors.Is(err, ErrNotFound) {
@@ -56,7 +89,13 @@ func (h *Handler) Detail(w http.ResponseWriter, r *http.Request) {
 		h.view.ServerError(w, r, err)
 		return
 	}
-	page := detailPage{Product: d, Selection: d.Select(parseIDs(r.URL.Query().Get("o")))}
+	q := r.URL.Query()
+	page := detailPage{Product: d, Selection: d.Select(parseIDs(q.Get("o"))), MaxQuantity: maxCartQuantity}
+	if v := page.Selection.Variant; v != nil {
+		page.MaxQuantity = max(min(v.Stock, maxCartQuantity), 1)
+	}
+	page.Quantity, _ = strconv.Atoi(q.Get("q"))
+	page.Quantity = min(max(page.Quantity, 1), page.MaxQuantity)
 
 	if view.IsHTMX(r) && r.Header.Get("HX-Target") == "product-buy" {
 		h.view.Fragment(w, r, http.StatusOK, "product/detail", "product-buy", page)

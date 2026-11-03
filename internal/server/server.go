@@ -14,6 +14,7 @@ import (
 
 	"ecommerce/internal/address"
 	"ecommerce/internal/auth"
+	"ecommerce/internal/cart"
 	"ecommerce/internal/category"
 	"ecommerce/internal/config"
 	"ecommerce/internal/home"
@@ -39,6 +40,20 @@ func NewRouter(d Deps) http.Handler {
 	addressSvc := address.NewService(address.NewRepository(d.DB))
 	categorySvc := category.NewService(category.NewRepository(d.DB))
 	productSvc := product.NewService(product.NewRepository(d.DB))
+	cartSvc := cart.NewService(cart.NewRepository(d.DB))
+
+	// Header cart badge on full pages for signed-in users (one small query).
+	d.View.SetCartCounter(func(r *http.Request) int {
+		p, ok := auth.FromContext(r.Context())
+		if !ok {
+			return 0
+		}
+		n, err := cartSvc.Count(r.Context(), p.UserID)
+		if err != nil {
+			d.Log.Error("cart badge", "error", err)
+		}
+		return n
+	})
 
 	authH := auth.NewHandler(authSvc, d.View, auth.NewCookieConfig(d.Config.IsProduction()), d.Log)
 
@@ -78,6 +93,7 @@ func NewRouter(d Deps) http.Handler {
 		r.Use(auth.RequireUser)
 		user.NewHandler(userSvc, d.View).Routes(r)
 		address.NewHandler(addressSvc, d.View).Routes(r)
+		cart.NewHandler(cartSvc, d.View).Routes(r)
 	})
 
 	return r

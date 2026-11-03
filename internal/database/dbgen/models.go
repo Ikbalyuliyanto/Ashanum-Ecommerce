@@ -8,6 +8,23 @@ import (
 	"time"
 )
 
+type Cart struct {
+	ID        int64
+	UserID    int64
+	Active    bool
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type CartItem struct {
+	ID        int64
+	CartID    int64
+	VariantID *int64
+	Quantity  int32
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 type Category struct {
 	ID           int64
 	Name         string

@@ -14,7 +14,7 @@ dilakukan per fase.
 | 1 | Arsitektur, konfigurasi, PostgreSQL, migrasi, base template, server siap-Nginx | Selesai |
 | 2 | Authentication, user, profil, alamat | Selesai |
 | 3 | Kategori, produk, gambar, atribut, varian, storefront, pencarian | Selesai |
-| 4 | Cart | Belum |
+| 4 | Cart, cart item, tambah/ubah/hapus, ringkasan, persiapan Buy Now | Selesai |
 | 5 | Checkout, order, shipping | Belum |
 | 6 | Midtrans, webhook, payment | Belum |
 | 7 | Riwayat order, review, return, refund | Belum |
@@ -88,6 +88,20 @@ Sort: `relevance` (default jika ada `q`), `newest`, `bestselling`, `price_asc`,
 dan tetap berupa link biasa tanpa JavaScript. Keranjang, Beli Sekarang, dan Pesanan masih
 placeholder nonaktif (`data-phase="4"`/`"5"`).
 
+### Keranjang (Fase 4)
+
+| Route | Keterangan |
+|-------|------------|
+| `GET /cart` | Keranjang; pilihan item lewat `?sel=1&item=<id>…` (HTMX: hanya bagian keranjang) |
+| `POST /cart/items` | Tambah varian (`variant_id`, `quantity`, `return_to`) |
+| `POST /cart/items/{id}` | Ubah jumlah (`quantity`) |
+| `POST /cart/items/{id}/delete` | Hapus item |
+| `POST /cart/clear` | Kosongkan keranjang |
+
+Semua route keranjang wajib login. Tamu yang menekan "Masukkan Keranjang" diarahkan ke
+login lalu kembali ke produk dengan varian dan jumlah yang sama. Checkout dan Beli Sekarang
+masih placeholder Phase 5 (`data-phase="5"`).
+
 ### Data demo (development)
 
 ```bash
@@ -129,6 +143,7 @@ internal/address/            Alamat Saya (satu alamat utama per user)
 internal/category/           kategori + cache memori daftar kategori aktif
 internal/product/            katalog: listing, pencarian, detail, varian, home sections
 internal/media/              aturan URL gambar (Cloudinary/data URI) + resize Cloudinary
+internal/cart/               keranjang: satu cart aktif per user, item per varian
 internal/validate/           aturan validasi input bersama (email, HP, nama, password)
 internal/database/dbgen/     kode hasil sqlc (jangan diedit manual)
 internal/testutil/           schema PostgreSQL terisolasi untuk test
@@ -202,6 +217,18 @@ adalah ringkasan varian aktif yang dirawat trigger database (untuk filter/sort c
 jangan ditulis dari aplikasi. Composite foreign key di `product_variant_values` menjamin
 varian, atribut, dan nilai berasal dari produk yang sama. `sold_count` dan `rating_*`
 nanti dirawat modul pesanan dan ulasan.
+
+**Keranjang.** Item merujuk `variant_id` (unik per cart; menambah varian yang sama
+menaikkan jumlah lewat satu UPSERT atomik). Keranjang **bukan** sumber harga atau stok:
+harga, stok, dan ketersediaan dibaca langsung dari katalog setiap kali ditampilkan, stok
+tidak dipesan/dikurangi, dan checkout (Phase 5) wajib memvalidasi ulang. Jumlah per item
+1–99 (`CHECK` di database), maksimal 50 item berbeda per cart. Penambahan yang melebihi
+stok **ditolak** dengan pesan, tidak dipotong diam-diam. Item yang produknya nonaktif,
+dihapus, atau habis tetap tampil sebagai tidak tersedia dan hanya bisa dihapus. Pilihan
+item untuk checkout adalah state request (checkbox), tidak disimpan. Badge keranjang =
+total quantity seluruh item (2 × A + 3 × B = 5), ditampilkan "99+" di atas 99.
+`cart.Service.Quote(variant, qty)` memvalidasi pembelian tanpa menyimpan apa pun —
+titik masuk "Beli Sekarang" di Phase 5.
 
 **Gambar.** Database menyimpan URL, bukan file. `media.Valid` hanya menerima URL https
 Cloudinary atau data URI kecil (data demo); `{{img url lebar}}` meminta Cloudinary

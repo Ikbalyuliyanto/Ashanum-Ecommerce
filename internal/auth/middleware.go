@@ -47,7 +47,13 @@ func RequireUser(next http.Handler) http.Handler {
 		if _, ok := FromContext(r.Context()); !ok {
 			target := r.URL.RequestURI()
 			if r.Method != http.MethodGet {
+				// A form post (e.g. add to cart) returns to the page it was
+				// sent from. CrossOriginProtection already guarantees the
+				// request is same-origin; safeNext re-checks at login.
 				target = "/account"
+				if u, err := url.Parse(r.Referer()); err == nil && u.Host == r.Host && u.Path != "" {
+					target = u.RequestURI()
+				}
 			}
 			if r.Header.Get("HX-Request") == "true" {
 				if u, err := url.Parse(r.Header.Get("HX-Current-URL")); err == nil && u.Path != "" {

@@ -1,7 +1,7 @@
-{{/* The cart icon is a placeholder until the cart phase (Phase 4). */}}
 {{define "navbar" -}}
 <nav class="nav" aria-label="Navigasi utama">
-  <span class="nav__icon is-disabled" aria-disabled="true" title="Keranjang segera hadir" data-phase="4">{{icon "cart"}}<span class="visually-hidden">Keranjang (segera hadir)</span></span>
+  <a class="nav__icon nav__cart{{if hasPrefix .Path "/cart"}} is-active{{end}}" href="/cart" aria-label="Keranjang{{if .CartCount}} ({{.CartCount}} produk){{end}}">
+    {{- icon "cart"}}{{template "cart-badge" (dict "ID" "cart-badge" "Count" .CartCount "OOB" false)}}</a>
   {{- if .User}}
   <a class="nav__link{{if hasPrefix .Path "/account"}} is-active{{end}}" href="/account" aria-label="Akun Saya">{{icon "user"}}<span class="nav__text">Akun Saya</span></a>
   {{- else}}

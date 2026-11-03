@@ -1,0 +1,6 @@
+{{/* Cart badge: total quantity in the cart. Call with
+     (dict "ID" "cart-badge" "Count" n "OOB" bool); OOB marks the copy sent in
+     HTMX responses so htmx swaps the header badge in place. */}}
+{{define "cart-badge" -}}
+<span id="{{.ID}}" class="cart-badge"{{if .OOB}} hx-swap-oob="true"{{end}}{{if not .Count}} hidden{{end}}>{{if gt .Count 99}}99+{{else}}{{.Count}}{{end}}</span>
+{{- end}}

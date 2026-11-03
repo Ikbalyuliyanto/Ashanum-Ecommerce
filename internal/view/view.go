@@ -38,7 +38,9 @@ type Page struct {
 	Query url.Values // request query, e.g. to keep the header search text
 	User  any        // signed-in user or nil; see Config.CurrentUser
 	Flash *Flash     // one-time message from the previous request
-	Data  any
+	// CartCount is the header cart badge (total quantity), full pages only.
+	CartCount int
+	Data      any
 }
 
 type Config struct {
@@ -52,9 +54,18 @@ type Config struct {
 }
 
 type Renderer struct {
-	cfg   Config
-	pages map[string]*template.Template
+	cfg       Config
+	pages     map[string]*template.Template
+	cartCount func(*http.Request) int
 }
+
+// SetCartCounter sets how full pages get the header cart badge for a
+// signed-in user. Call it while wiring routes, before serving.
+func (r *Renderer) SetCartCounter(fn func(*http.Request) int) { r.cartCount = fn }
+
+// cartQuantifier is implemented by page data that already loaded the cart,
+// so the badge needs no extra query.
+type cartQuantifier interface{ CartQuantity() int }
 
 var bufPool = sync.Pool{New: func() any { return new(bytes.Buffer) }}
 
@@ -86,6 +97,8 @@ func (r *Renderer) funcs() template.FuncMap {
 		"rupiah":      FormatRupiah,
 		"sold":        FormatSold,
 		"img":         r.imageURL,
+		"add":         func(a, b int) int { return a + b },
+		"sub":         func(a, b int) int { return a - b },
 	}
 }
 
@@ -143,13 +156,13 @@ func (r *Renderer) lookup(name string) (*template.Template, error) {
 // Render writes a full page, e.g. Render(w, req, 200, "home/index", data).
 // It also consumes a pending flash message.
 func (r *Renderer) Render(w http.ResponseWriter, req *http.Request, status int, page string, data any) {
-	r.execute(w, req, status, page, "page:"+page, data, r.takeFlash(w, req))
+	r.execute(w, req, status, page, "page:"+page, data, r.takeFlash(w, req), true)
 }
 
 // Fragment writes one {{define}} block from a page's template set, for HTMX
 // responses that swap part of the page.
 func (r *Renderer) Fragment(w http.ResponseWriter, req *http.Request, status int, page, block string, data any) {
-	r.execute(w, req, status, page, block, data, nil)
+	r.execute(w, req, status, page, block, data, nil, false)
 }
 
 // Error renders the shared error page for the given status code.
@@ -165,7 +178,7 @@ func (r *Renderer) ServerError(w http.ResponseWriter, req *http.Request, err err
 
 // execute renders into a pooled buffer first, so a template error never sends
 // a half-written page with a 200 status.
-func (r *Renderer) execute(w http.ResponseWriter, req *http.Request, status int, page, name string, data any, flash *Flash) {
+func (r *Renderer) execute(w http.ResponseWriter, req *http.Request, status int, page, name string, data any, flash *Flash, full bool) {
 	t, err := r.lookup(page)
 	if err != nil {
 		r.fail(w, req, err)
@@ -183,6 +196,13 @@ func (r *Renderer) execute(w http.ResponseWriter, req *http.Request, status int,
 		User:  r.cfg.CurrentUser(req),
 		Flash: flash,
 		Data:  data,
+	}
+	if full && root.User != nil {
+		if cq, ok := data.(cartQuantifier); ok {
+			root.CartCount = cq.CartQuantity()
+		} else if r.cartCount != nil {
+			root.CartCount = r.cartCount(req)
+		}
 	}
 	if err := t.ExecuteTemplate(buf, name, root); err != nil {
 		r.fail(w, req, err)
