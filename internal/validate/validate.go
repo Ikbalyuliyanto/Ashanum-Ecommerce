@@ -147,3 +147,23 @@ func printable(s string) bool {
 	}
 	return true
 }
+
+// Slug turns text into a URL slug: lower-case ASCII letters and digits
+// separated by single hyphens ("Kaos Ashanum – Hitam" → "kaos-ashanum-hitam").
+func Slug(s string) string {
+	var b strings.Builder
+	dash := false
+	for _, r := range strings.ToLower(s) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			dash = false
+		} else if b.Len() > 0 && !dash {
+			b.WriteByte('-')
+			dash = true
+		}
+	}
+	return strings.TrimSuffix(b.String(), "-")
+}
+
+// IsSlug reports whether s is already a valid slug of at most 120 bytes.
+func IsSlug(s string) bool { return s != "" && len(s) <= 120 && Slug(s) == s }

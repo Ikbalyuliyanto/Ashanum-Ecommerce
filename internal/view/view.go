@@ -18,6 +18,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"path"
 	"strings"
 	"sync"
@@ -34,8 +35,9 @@ type App struct {
 type Page struct {
 	App   App
 	Path  string
-	User  any    // signed-in user or nil; see Config.CurrentUser
-	Flash *Flash // one-time message from the previous request
+	Query url.Values // request query, e.g. to keep the header search text
+	User  any        // signed-in user or nil; see Config.CurrentUser
+	Flash *Flash     // one-time message from the previous request
 	Data  any
 }
 
@@ -81,6 +83,9 @@ func (r *Renderer) funcs() template.FuncMap {
 		"phoneLocal":  LocalPhone,
 		"initial":     initial,
 		"hasPrefix":   strings.HasPrefix,
+		"rupiah":      FormatRupiah,
+		"sold":        FormatSold,
+		"img":         r.imageURL,
 	}
 }
 
@@ -174,6 +179,7 @@ func (r *Renderer) execute(w http.ResponseWriter, req *http.Request, status int,
 	root := Page{
 		App:   r.cfg.App,
 		Path:  req.URL.Path,
+		Query: req.URL.Query(),
 		User:  r.cfg.CurrentUser(req),
 		Flash: flash,
 		Data:  data,

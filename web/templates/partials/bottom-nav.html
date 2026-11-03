@@ -1,8 +1,11 @@
-{{/* Mobile tab bar on top-level pages. Kategori/Keranjang tabs are added in
-     the phases that build them. */}}
+{{/* Mobile tab bar on top-level pages. Keranjang (Phase 4) and Pesanan
+     (Phase 5) are disabled placeholders until those domains exist. */}}
 {{define "bottom-nav" -}}
 <nav class="bottom-nav" aria-label="Navigasi bawah">
   <a class="bottom-nav__item{{if eq .Path "/"}} is-active{{end}}" href="/"{{if eq .Path "/"}} aria-current="page"{{end}}>{{icon "home"}}<span>Beranda</span></a>
+  <a class="bottom-nav__item{{if hasPrefix .Path "/categories"}} is-active{{end}}" href="/categories"{{if hasPrefix .Path "/categories"}} aria-current="page"{{end}}>{{icon "grid"}}<span>Kategori</span></a>
+  <span class="bottom-nav__item is-disabled" aria-disabled="true" title="Segera hadir" data-phase="4">{{icon "cart"}}<span>Keranjang</span></span>
+  <span class="bottom-nav__item is-disabled" aria-disabled="true" title="Segera hadir" data-phase="5">{{icon "receipt"}}<span>Pesanan</span></span>
   <a class="bottom-nav__item{{if hasPrefix .Path "/account"}} is-active{{end}}" href="/account"{{if hasPrefix .Path "/account"}} aria-current="page"{{end}}>{{icon "user"}}<span>Akun</span></a>
 </nav>
 {{- end}}

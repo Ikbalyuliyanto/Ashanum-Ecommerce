@@ -13,7 +13,7 @@ dilakukan per fase.
 |------|---------|--------|
 | 1 | Arsitektur, konfigurasi, PostgreSQL, migrasi, base template, server siap-Nginx | Selesai |
 | 2 | Authentication, user, profil, alamat | Selesai |
-| 3 | Kategori, produk, gambar, atribut, varian | Belum |
+| 3 | Kategori, produk, gambar, atribut, varian, storefront, pencarian | Selesai |
 | 4 | Cart | Belum |
 | 5 | Checkout, order, shipping | Belum |
 | 6 | Midtrans, webhook, payment | Belum |
@@ -73,6 +73,31 @@ saat restart). Di production `SESSION_SECRET` wajib, minimal 32 karakter, misaln
 
 Semua `/account/*` mewajibkan login; tamu diarahkan ke `/login?next=...`.
 
+### Halaman storefront (Fase 3)
+
+| Route | Keterangan |
+|-------|------------|
+| `GET /` | Home: promo, kategori, Flash Sale, Terlaris, Rekomendasi Untukmu |
+| `GET /categories` | Semua kategori aktif (tab "Kategori" di mobile) |
+| `GET /categories/{slug}` | Produk per kategori, dengan filter harga dan sort |
+| `GET /search?q=&category=&min=&max=&flash=1&sort=&page=` | Pencarian dan daftar semua produk |
+| `GET /products/{slug}?o=<id nilai>,…` | Detail produk; pilihan varian lewat `?o=` (HTMX menukar panel harga) |
+
+Sort: `relevance` (default jika ada `q`), `newest`, `bestselling`, `price_asc`,
+`price_desc`. Paginasi 20 produk per halaman, tombol "Muat lebih banyak" memakai HTMX
+dan tetap berupa link biasa tanpa JavaScript. Keranjang, Beli Sekarang, dan Pesanan masih
+placeholder nonaktif (`data-phase="4"`/`"5"`).
+
+### Data demo (development)
+
+```bash
+go run ./scripts/seeddemo     # memakai DATABASE_URL dari .env
+```
+
+Mengisi database development yang **kosong** dengan 9 kategori dan 26 produk demo
+(atribut, varian, stok, ilustrasi SVG). Menolak berjalan jika `APP_ENV=production` atau
+jika sudah ada produk. Tool ini tidak ikut masuk binary produksi.
+
 ### Test
 
 ```bash
@@ -101,11 +126,16 @@ internal/home/               halaman beranda
 internal/auth/               register, login, logout, sesi, middleware RequireUser
 internal/user/               Akun Saya + profil
 internal/address/            Alamat Saya (satu alamat utama per user)
+internal/category/           kategori + cache memori daftar kategori aktif
+internal/product/            katalog: listing, pencarian, detail, varian, home sections
+internal/media/              aturan URL gambar (Cloudinary/data URI) + resize Cloudinary
 internal/validate/           aturan validasi input bersama (email, HP, nama, password)
 internal/database/dbgen/     kode hasil sqlc (jangan diedit manual)
 internal/testutil/           schema PostgreSQL terisolasi untuk test
 web/templates/               layouts/, partials/, <modul>/, errors/
-web/static/                  css/, js/, icons/
+web/static/                  css/, js/, icons/, img/ (placeholder)
+scripts/seeddemo/            pengisi data demo untuk development
+docs/                        blueprint, rencana kode wilayah alamat (Phase 5)
 deploy/nginx/                konfigurasi Nginx + real IP Cloudflare
 deploy/systemd/              unit systemd
 ```
@@ -123,8 +153,14 @@ Perbedaan dari struktur di blueprint:
 - Alamat dipisah ke modul `internal/address/` (blueprint menaruhnya di modul user) agar
   service-nya bisa dipakai ulang langsung oleh API `/api/v1/addresses`.
 - Layout akun bernama `layouts/account.html` (bukan `user.html`), template halaman akun di
-  `web/templates/user/`. Layout `admin.html` dan partial `product-card`, `pagination`
-  dibuat di fase yang memakainya.
+  `web/templates/user/`. Layout `admin.html` dibuat di fase admin.
+- Tidak ada partial `pagination`: listing memakai "Muat lebih banyak" (fragment
+  `result-items` di `product/listing.html`).
+- Halaman `/categories/{slug}` ditangani modul `product` (isinya daftar produk); modul
+  `category` menangani `/categories` dan data kategori.
+- Field produk `Price`, `OriginalPrice`, `Stock` tidak disimpan langsung di produk:
+  sumbernya varian. `DiscountPercentage` dihitung dari harga, tidak disimpan. `BestSeller`
+  tidak berupa flag manual: section Terlaris diurutkan dari `sold_count`.
 
 ## Konvensi
 
@@ -159,6 +195,22 @@ Bearer token mobile.
 (production), SameSite=Lax, berisi token acak 256-bit. Database hanya menyimpan
 HMAC-SHA256(`SESSION_SECRET`, token). Masa berlaku 30 hari dan diperpanjang otomatis jika
 sisa kurang dari 15 hari. Mengganti `SESSION_SECRET` mengeluarkan semua user.
+
+**Katalog.** Harga dan stok hanya ada di `product_variants`; produk tanpa opsi tetap
+punya satu varian. Kolom `products.price`, `price_max`, `original_price`, `in_stock`
+adalah ringkasan varian aktif yang dirawat trigger database (untuk filter/sort cepat),
+jangan ditulis dari aplikasi. Composite foreign key di `product_variant_values` menjamin
+varian, atribut, dan nilai berasal dari produk yang sama. `sold_count` dan `rating_*`
+nanti dirawat modul pesanan dan ulasan.
+
+**Gambar.** Database menyimpan URL, bukan file. `media.Valid` hanya menerima URL https
+Cloudinary atau data URI kecil (data demo); `{{img url lebar}}` meminta Cloudinary
+me-resize, sehingga HG680P tidak memproses gambar. Host gambar lain harus ditambahkan di
+`internal/media` dan di `img-src` CSP sekaligus.
+
+**Pencarian.** Kolom `search_vector` (nama + merek, generated) dengan index GIN dan
+konfigurasi `simple`; setiap kata dicocokkan sebagai prefiks dan semuanya harus cocok.
+Nama kategori ikut dicocokkan. Tanpa Elasticsearch atau layanan eksternal.
 
 **Template.** Halaman `web/templates/<modul>/<nama>.html` dirender dengan nama
 `"<modul>/<nama>"`, memilih layout lewat `{{template "base" .}}` dan mengisi blok

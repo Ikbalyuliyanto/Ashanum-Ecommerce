@@ -73,3 +73,22 @@ func TestText(t *testing.T) {
 		t.Errorf("Text = %q", got)
 	}
 }
+
+func TestSlug(t *testing.T) {
+	for in, want := range map[string]string{
+		"Kaos Ashanum – Hitam": "kaos-ashanum-hitam",
+		"  Gamis & Dress  ":    "gamis-dress",
+		"Tumbler 500ml!!":      "tumbler-500ml",
+		"---":                  "",
+		"Café Latte":           "caf-latte",
+	} {
+		if got := Slug(in); got != want {
+			t.Errorf("Slug(%q) = %q, want %q", in, got, want)
+		}
+	}
+	for s, want := range map[string]bool{"kaos-hitam": true, "kaos--hitam": false, "Kaos": false, "": false, "-a": false} {
+		if IsSlug(s) != want {
+			t.Errorf("IsSlug(%q) != %v", s, want)
+		}
+	}
+}

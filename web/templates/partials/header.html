@@ -5,6 +5,12 @@
       <img class="brand__mark" src="{{asset "icons/favicon.png"}}" alt="" width="32" height="32">
       <span class="brand__word">ASHANUM</span>
     </a>
+    <form class="search" action="/search" method="get" role="search">
+      <label class="visually-hidden" for="site-search">Cari produk</label>
+      <input class="search__input" id="site-search" type="search" name="q" value="{{.Query.Get "q"}}"
+             placeholder="Cari produk" autocomplete="off" enterkeyhint="search" maxlength="100">
+      <button class="search__button" type="submit" aria-label="Cari">{{icon "search"}}</button>
+    </form>
     {{template "navbar" .}}
   </div>
 </header>

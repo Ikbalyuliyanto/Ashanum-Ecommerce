@@ -1,0 +1,77 @@
+{{template "base" .}}
+
+{{define "title"}}{{.Data.Title}} · {{.App.Name}}{{end}}
+
+{{define "content"}}
+<div class="listing">
+  <nav class="breadcrumb" aria-label="Breadcrumb">
+    <a href="/">Beranda</a>
+    {{if .Data.Category}}<span aria-hidden="true">›</span> <a href="/categories">Kategori</a>{{end}}
+    <span aria-hidden="true">›</span> <span>{{.Data.Title}}</span>
+  </nav>
+
+  <div class="listing__head">
+    <h1 class="listing__title">{{.Data.Title}}</h1>
+    <p class="listing__count">{{.Data.Result.Total}} produk</p>
+  </div>
+
+  <div class="listing__toolbar">
+    <nav class="sort-tabs" aria-label="Urutkan">
+      {{range .Data.Sorts}}<a class="sort-tab{{if .Active}} is-active{{end}}" href="{{.URL}}"{{if .Active}} aria-current="true"{{end}}>{{.Label}}</a>{{end}}
+    </nav>
+    <details class="filter"{{if .Data.HasFilters}} open{{end}}>
+      <summary class="filter__toggle">{{icon "filter"}} Filter</summary>
+      <form class="filter__form" method="get" action="{{.Data.BasePath}}">
+        {{with .Data.Query}}<input type="hidden" name="q" value="{{.}}">{{end}}
+        {{with .Data.SortParam}}<input type="hidden" name="sort" value="{{.}}">{{end}}
+        {{if not .Data.Category}}
+        <div class="field">
+          <label class="field__label" for="f-category">Kategori</label>
+          <select class="input" id="f-category" name="category">
+            <option value="">Semua kategori</option>
+            {{range .Data.Categories}}<option value="{{.Slug}}"{{if eq .Slug $.Data.Filter}} selected{{end}}>{{.Name}}</option>{{end}}
+          </select>
+        </div>
+        {{end}}
+        <div class="field">
+          <span class="field__label">Rentang harga (Rp)</span>
+          <div class="price-range">
+            <input class="input" name="min" inputmode="numeric" placeholder="Minimum" value="{{.Data.MinPrice}}" aria-label="Harga minimum">
+            <span aria-hidden="true">–</span>
+            <input class="input" name="max" inputmode="numeric" placeholder="Maksimum" value="{{.Data.MaxPrice}}" aria-label="Harga maksimum">
+          </div>
+        </div>
+        <label class="check"><input type="checkbox" name="flash" value="1"{{if .Data.FlashSale}} checked{{end}}> Hanya Flash Sale</label>
+        <div class="filter__actions">
+          <a class="btn" href="{{.Data.BasePath}}{{with .Data.Query}}?q={{.}}{{end}}">Atur Ulang</a>
+          <button class="btn btn--primary" type="submit">Terapkan</button>
+        </div>
+      </form>
+    </details>
+  </div>
+
+  {{if .Data.Result.HasPrev}}<p><a class="link-btn" href="{{.Data.PrevURL}}">‹ Halaman sebelumnya</a></p>{{end}}
+
+  {{if .Data.Result.Items}}
+  <div class="product-grid" id="results">{{template "result-items" .}}</div>
+  {{else}}
+  <div class="empty-state">
+    {{icon "search"}}
+    <h2>Produk tidak ditemukan</h2>
+    <p class="muted">Coba kata kunci lain atau atur ulang filter.</p>
+    <a class="btn btn--outline" href="/search">Lihat semua produk</a>
+  </div>
+  {{end}}
+</div>
+{{end}}
+
+{{/* One page of cards plus the next "load more" link. HTMX swaps the link
+     with this fragment, appending the next page into the grid; without
+     JavaScript the link opens the next page. */}}
+{{define "result-items"}}
+{{range .Data.Result.Items}}{{template "product-card" .}}{{end}}
+{{if .Data.Result.HasNext}}
+<a id="load-more" class="load-more" href="{{.Data.NextURL}}"
+   hx-get="{{.Data.NextURL}}" hx-target="this" hx-swap="outerHTML">Muat lebih banyak</a>
+{{end}}
+{{end}}

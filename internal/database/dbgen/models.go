@@ -8,6 +8,81 @@ import (
 	"time"
 )
 
+type Category struct {
+	ID           int64
+	Name         string
+	Slug         string
+	ImageUrl     *string
+	Active       bool
+	DisplayOrder int32
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+type Product struct {
+	ID            int64
+	CategoryID    int64
+	Name          string
+	Slug          string
+	Description   string
+	Brand         string
+	Active        bool
+	Featured      bool
+	FlashSale     bool
+	SoldCount     int32
+	RatingAverage float64
+	RatingCount   int32
+	Price         *int64
+	PriceMax      *int64
+	OriginalPrice *int64
+	InStock       bool
+	SearchVector  interface{}
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+type ProductAttribute struct {
+	ID           int64
+	ProductID    int64
+	Name         string
+	DisplayOrder int32
+}
+
+type ProductAttributeValue struct {
+	ID           int64
+	AttributeID  int64
+	Value        string
+	DisplayOrder int32
+}
+
+type ProductImage struct {
+	ID           int64
+	ProductID    int64
+	Url          string
+	Alt          string
+	DisplayOrder int32
+	CreatedAt    time.Time
+}
+
+type ProductVariant struct {
+	ID            int64
+	ProductID     int64
+	Sku           string
+	Price         int64
+	OriginalPrice *int64
+	Stock         int32
+	Active        bool
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+type ProductVariantValue struct {
+	ProductID   int64
+	VariantID   int64
+	AttributeID int64
+	ValueID     int64
+}
+
 type Session struct {
 	TokenHash []byte
 	UserID    int64

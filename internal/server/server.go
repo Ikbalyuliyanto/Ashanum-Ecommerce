@@ -14,9 +14,11 @@ import (
 
 	"ecommerce/internal/address"
 	"ecommerce/internal/auth"
+	"ecommerce/internal/category"
 	"ecommerce/internal/config"
 	"ecommerce/internal/home"
 	"ecommerce/internal/middleware"
+	"ecommerce/internal/product"
 	"ecommerce/internal/user"
 	"ecommerce/internal/view"
 )
@@ -35,6 +37,8 @@ func NewRouter(d Deps) http.Handler {
 	authSvc := auth.NewService(auth.NewRepository(d.DB), d.Config.Session.Secret)
 	userSvc := user.NewService(user.NewRepository(d.DB))
 	addressSvc := address.NewService(address.NewRepository(d.DB))
+	categorySvc := category.NewService(category.NewRepository(d.DB))
+	productSvc := product.NewService(product.NewRepository(d.DB))
 
 	authH := auth.NewHandler(authSvc, d.View, auth.NewCookieConfig(d.Config.IsProduction()), d.Log)
 
@@ -65,7 +69,9 @@ func NewRouter(d Deps) http.Handler {
 	r.Method(http.MethodGet, "/static/*", d.Assets)
 	r.Method(http.MethodHead, "/static/*", d.Assets)
 
-	home.NewHandler(d.View).Routes(r)
+	home.NewHandler(productSvc, categorySvc, d.View).Routes(r)
+	category.NewHandler(categorySvc, d.View).Routes(r)
+	product.NewHandler(productSvc, categorySvc, d.View).Routes(r)
 	authH.Routes(r)
 
 	r.Group(func(r chi.Router) {

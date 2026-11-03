@@ -59,14 +59,17 @@ func do(h http.Handler, req *http.Request) *httptest.ResponseRecorder {
 	return rec
 }
 
-func TestHomePage(t *testing.T) {
-	rec := do(newTestRouter(t), httptest.NewRequest(http.MethodGet, "/", nil))
+// TestBaseLayoutAndHeaders checks the shared layout and security headers on a
+// page that needs no database (the home page is covered with a database in
+// TestStorefrontPages).
+func TestBaseLayoutAndHeaders(t *testing.T) {
+	rec := do(newTestRouter(t), httptest.NewRequest(http.MethodGet, "/login", nil))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"<!doctype html>", "Toko Uji", "/static/css/app.css?v=", "/static/js/htmx.min.js?v="} {
+	for _, want := range []string{"<!doctype html>", "ASHANUM", `action="/search"`, "/static/css/app.css?v=", "/static/js/htmx.min.js?v="} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q", want)
 		}

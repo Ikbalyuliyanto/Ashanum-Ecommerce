@@ -1,0 +1,105 @@
+{{template "base" .}}
+
+{{define "title"}}{{.Data.Product.Name}} · {{.App.Name}}{{end}}
+{{define "body-class"}}page-product{{end}}
+
+{{define "content"}}
+{{$p := .Data.Product}}
+<nav class="breadcrumb" aria-label="Breadcrumb">
+  <a href="/">Beranda</a> <span aria-hidden="true">›</span>
+  <a href="/categories/{{$p.CategorySlug}}">{{$p.CategoryName}}</a> <span aria-hidden="true">›</span>
+  <span>{{$p.Name}}</span>
+</nav>
+
+<div class="pdp">
+  {{/* CSS-only gallery: one radio per image; thumbnails are its labels. */}}
+  <section class="gallery" aria-label="Galeri produk">
+    {{range $i, $img := $p.Images}}<input class="gallery__radio" type="radio" name="gallery" id="gallery-{{$i}}"{{if eq $i 0}} checked{{end}} aria-label="Gambar {{$i}}">{{end}}
+    <div class="gallery__stage">
+      {{range $i, $img := $p.Images}}<img class="gallery__img" src="{{img $img.URL 600}}" alt="{{$img.Alt}}" width="600" height="600"{{if gt $i 0}} loading="lazy"{{end}}>{{else}}<img class="gallery__img" src="{{img "" 600}}" alt="" width="600" height="600">{{end}}
+    </div>
+    {{if gt (len $p.Images) 1}}
+    <div class="gallery__thumbs">
+      {{range $i, $img := $p.Images}}<label class="gallery__thumb" for="gallery-{{$i}}"><img src="{{img $img.URL 64}}" alt="" width="56" height="56" loading="lazy"></label>{{end}}
+    </div>
+    {{end}}
+  </section>
+
+  <section class="pdp__info">
+    {{with $p.Brand}}<p class="pdp__brand">{{.}}</p>{{end}}
+    <h1 class="pdp__name">{{if $p.FlashSale}}<span class="badge-flash">{{icon "zap"}} Flash Sale</span> {{end}}{{$p.Name}}</h1>
+    <p class="pdp__meta">
+      {{if $p.RatingCount}}<span class="pdp__rating">★ {{printf "%.1f" $p.RatingAverage}}</span> <span class="muted">({{$p.RatingCount}} penilaian)</span><span class="pdp__sep">|</span>{{end}}
+      <span>{{sold $p.SoldCount}} terjual</span>
+    </p>
+    {{template "product-buy" .}}
+  </section>
+</div>
+
+<section class="card pdp__desc" aria-labelledby="pdp-desc">
+  <h2 class="card__title" id="pdp-desc">Deskripsi Produk</h2>
+  <div class="prose">{{if $p.Description}}{{$p.Description}}{{else}}Belum ada deskripsi.{{end}}</div>
+</section>
+
+{{with .Data.Related}}
+<section class="section" aria-labelledby="pdp-related">
+  <div class="section__head">
+    <h2 class="section__title" id="pdp-related">Produk Serupa</h2>
+    <a class="section__more" href="/categories/{{$p.CategorySlug}}">Lihat Semua ›</a>
+  </div>
+  <div class="product-grid">{{range .}}{{template "product-card" .}}{{end}}</div>
+</section>
+{{end}}
+
+{{/* Cart and checkout are Phase 4/5: buttons are disabled placeholders. */}}
+<div class="buy-bar" data-phase="4">
+  <button class="btn btn--outline" type="button" disabled>{{icon "cart"}} Keranjang</button>
+  <button class="btn btn--primary" type="button" disabled>Beli Sekarang</button>
+</div>
+{{end}}
+
+{{/* Price, options and stock. Option chips are links; HTMX swaps only
+     this panel and updates the URL. */}}
+{{define "product-buy"}}
+{{$s := .Data.Selection}}
+<div id="product-buy" class="buy">
+  <div class="price-box">
+    <p class="price-box__now">{{rupiah $s.PriceMin}}{{if gt $s.PriceMax $s.PriceMin}} – {{rupiah $s.PriceMax}}{{end}}</p>
+    {{if $s.DiscountPercent}}<p class="price-box__was"><s>{{rupiah $s.OriginalPrice}}</s><span class="pcard__off">-{{$s.DiscountPercent}}%</span></p>{{end}}
+  </div>
+
+  {{range $s.Groups}}
+  <div class="opt-group" role="group" aria-labelledby="opt-{{.AttributeID}}">
+    <p class="opt-group__label" id="opt-{{.AttributeID}}">{{.Name}}{{with .Chosen}}: <strong>{{.}}</strong>{{end}}</p>
+    <div class="opt-list">
+      {{range .Options}}
+      <a class="opt{{if .Selected}} is-selected{{end}}{{if not .Available}} is-unavailable{{end}}"
+         href="{{$.Data.OptionURL .Next}}" hx-get="{{$.Data.OptionURL .Next}}"
+         hx-target="#product-buy" hx-swap="outerHTML" hx-push-url="true" rel="nofollow"
+         {{- if .Selected}} aria-current="true"{{end}}{{if not .Available}} title="Stok habis"{{end}}>{{.Value}}</a>
+      {{end}}
+    </div>
+  </div>
+  {{end}}
+
+  <div class="qty">
+    <span class="qty__label">Kuantitas</span>
+    <div class="qty__stepper" aria-disabled="true">
+      <button type="button" disabled aria-label="Kurangi">{{icon "minus"}}</button>
+      <input type="number" value="1" min="1" disabled aria-label="Jumlah">
+      <button type="button" disabled aria-label="Tambah">{{icon "plus"}}</button>
+    </div>
+    <span class="qty__stock">
+      {{- if $s.Variant}}{{if gt $s.Stock 0}}Stok tersisa {{$s.Stock}}{{else}}Stok habis{{end}}
+      {{- else if $s.Complete}}Kombinasi tidak tersedia
+      {{- else}}Pilih {{range $i, $name := $s.Missing}}{{if $i}}, {{end}}{{$name}}{{end}}{{end -}}
+    </span>
+  </div>
+
+  <div class="buy__actions" data-phase="4">
+    <button class="btn btn--outline" type="button" disabled>{{icon "cart"}} Masukkan Keranjang</button>
+    <button class="btn btn--primary" type="button" disabled>Beli Sekarang</button>
+  </div>
+  <p class="buy__note">Pembelian online segera hadir.{{with $s.Variant}} <span class="muted">SKU {{.SKU}}</span>{{end}}</p>
+</div>
+{{end}}

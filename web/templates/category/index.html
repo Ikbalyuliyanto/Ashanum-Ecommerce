@@ -1,0 +1,26 @@
+{{template "base" .}}
+
+{{define "title"}}Kategori · {{.App.Name}}{{end}}
+
+{{define "content"}}
+<div class="page-head">
+  <h1 class="page-head__title">Kategori</h1>
+  <p class="muted">Pilih kategori untuk melihat produknya.</p>
+</div>
+{{if .Data}}
+<div class="cat-grid">
+  {{range .Data}}
+  <a class="cat-card" href="/categories/{{.Slug}}">
+    <span class="cat-tile__icon">{{if .ImageURL}}<img src="{{img .ImageURL 64}}" alt="" width="56" height="56" loading="lazy">{{else}}{{initial .Name}}{{end}}</span>
+    <span class="cat-card__name">{{.Name}}</span>
+  </a>
+  {{end}}
+</div>
+{{else}}
+<div class="empty-state">
+  {{icon "grid"}}
+  <h2>Belum ada kategori</h2>
+  <p class="muted">Kategori produk segera tersedia.</p>
+</div>
+{{end}}
+{{end}}

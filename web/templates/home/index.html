@@ -3,13 +3,79 @@
 {{define "title"}}{{.App.Name}} — Belanja online{{end}}
 
 {{define "content"}}
-<section class="hero">
-  <h1 class="hero__title">Belanja nyaman di {{.App.Name}}</h1>
-  <p class="hero__text">Katalog produk sedang kami siapkan. Sambil menunggu, buat akun dan simpan alamat pengiriman Anda.</p>
-  {{if .User}}
-  <a class="btn" href="/account">Ke Akun Saya</a>
-  {{else}}
-  <a class="btn" href="/register">Daftar Sekarang</a>
+<div class="home">
+  {{/* Static promo slides; managed banners arrive with the admin phase. */}}
+  <section class="promo" aria-label="Promo">
+    <div class="promo__track">
+      <a class="promo__slide promo__slide--1" href="/search?flash=1">
+        <span class="promo__eyebrow">{{icon "zap"}} Flash Sale</span>
+        <strong class="promo__title">Diskon pilihan hari ini</strong>
+        <span class="promo__cta">Belanja sekarang ›</span>
+      </a>
+      <a class="promo__slide promo__slide--2" href="/search?sort=bestselling">
+        <span class="promo__eyebrow">{{icon "award"}} Terlaris</span>
+        <strong class="promo__title">Favorit pelanggan Ashanum</strong>
+        <span class="promo__cta">Lihat produk ›</span>
+      </a>
+      <a class="promo__slide promo__slide--3" href="/categories">
+        <span class="promo__eyebrow">{{icon "grid"}} Kategori</span>
+        <strong class="promo__title">Temukan gaya Anda</strong>
+        <span class="promo__cta">Jelajahi ›</span>
+      </a>
+    </div>
+  </section>
+
+  {{with .Data.Categories}}
+  <section class="section" aria-labelledby="home-categories">
+    <div class="section__head">
+      <h2 class="section__title" id="home-categories">Kategori</h2>
+      <a class="section__more" href="/categories">Lihat Semua ›</a>
+    </div>
+    <div class="cat-scroller">
+      {{range .}}
+      <a class="cat-tile" href="/categories/{{.Slug}}">
+        <span class="cat-tile__icon">{{if .ImageURL}}<img src="{{img .ImageURL 64}}" alt="" width="56" height="56" loading="lazy">{{else}}{{initial .Name}}{{end}}</span>
+        <span class="cat-tile__name">{{.Name}}</span>
+      </a>
+      {{end}}
+    </div>
+  </section>
   {{end}}
-</section>
+
+  {{with .Data.Sections.FlashSale}}
+  <section class="section section--flash" aria-labelledby="home-flash">
+    <div class="section__head">
+      <h2 class="section__title section__title--flash" id="home-flash">{{icon "zap"}} Flash Sale</h2>
+      <a class="section__more" href="/search?flash=1">Lihat Semua ›</a>
+    </div>
+    <div class="h-scroller">{{range .}}{{template "product-card" .}}{{end}}</div>
+  </section>
+  {{end}}
+
+  {{with .Data.Sections.BestSellers}}
+  <section class="section" aria-labelledby="home-best">
+    <div class="section__head">
+      <h2 class="section__title" id="home-best">{{icon "award"}} Terlaris</h2>
+      <a class="section__more" href="/search?sort=bestselling">Lihat Semua ›</a>
+    </div>
+    <div class="h-scroller">{{range .}}{{template "product-card" .}}{{end}}</div>
+  </section>
+  {{end}}
+
+  <section class="section" aria-labelledby="home-recommended">
+    <div class="section__head">
+      <h2 class="section__title" id="home-recommended">Rekomendasi Untukmu</h2>
+    </div>
+    {{with .Data.Sections.Recommended}}
+    <div class="product-grid">{{range .}}{{template "product-card" .}}{{end}}</div>
+    <a class="btn btn--outline btn--block section__cta" href="/search">Lihat Semua Produk</a>
+    {{else}}
+    <div class="empty-state">
+      {{icon "package"}}
+      <h2>Produk segera hadir</h2>
+      <p class="muted">Katalog Ashanum sedang disiapkan.</p>
+    </div>
+    {{end}}
+  </section>
+</div>
 {{end}}

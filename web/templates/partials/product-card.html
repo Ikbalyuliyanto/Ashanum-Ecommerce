@@ -1,0 +1,17 @@
+{{/* Compact marketplace product card; "." is a product.Card. */}}
+{{define "product-card" -}}
+<a class="pcard{{if not .InStock}} is-soldout{{end}}" href="/products/{{.Slug}}">
+  <div class="pcard__media">
+    <img src="{{img .ImageURL 220}}" alt="" width="220" height="220" loading="lazy" decoding="async">
+    {{- if not .InStock}}<span class="pcard__soldout">Habis</span>{{end}}
+  </div>
+  <div class="pcard__body">
+    <h3 class="pcard__name">{{if .FlashSale}}<span class="pcard__flash" title="Flash Sale">{{icon "zap"}}</span>{{end}}{{.Name}}</h3>
+    <p class="pcard__price">{{rupiah .Price}}</p>
+    {{- if .DiscountPercent}}
+    <p class="pcard__was"><s>{{rupiah .OriginalPrice}}</s><span class="pcard__off">-{{.DiscountPercent}}%</span></p>
+    {{- end}}
+    <p class="pcard__meta">{{if .RatingCount}}<span class="pcard__star" aria-hidden="true">★</span>{{printf "%.1f" .RatingAverage}}<span class="pcard__dot">·</span>{{end}}{{sold .SoldCount}} terjual</p>
+  </div>
+</a>
+{{- end}}
