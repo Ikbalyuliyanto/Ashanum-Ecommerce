@@ -1,0 +1,74 @@
+{{template "base" .}}
+
+{{define "title"}}Alamat Saya · {{.App.Name}}{{end}}
+{{define "content"}}{{template "account-layout" .}}{{end}}
+{{define "account-title"}}Alamat Saya{{end}}
+{{define "account-main"}}{{template "address-list" .}}{{end}}
+
+{{/* Replaced by HTMX after "Jadikan Utama" or "Hapus". Without JavaScript the
+     same forms post normally and redirect back here. */}}
+{{define "address-list"}}
+<div id="address-list">
+  {{with .Data.Notice}}<div class="alert alert--success" role="status">{{.}}</div>{{end}}
+
+  {{if .Data.Addresses}}
+  <div class="address-list">
+    {{range .Data.Addresses}}
+    <article class="address-card{{if .IsPrimary}} is-primary{{end}}" aria-label="Alamat {{.Label}}">
+      {{if .IsPrimary}}
+      <span class="radio-dot is-on" role="img" aria-label="Alamat utama"></span>
+      {{else}}
+      <form method="post" action="/account/addresses/{{.ID}}/primary"
+            hx-post="/account/addresses/{{.ID}}/primary" hx-target="#address-list" hx-swap="outerHTML">
+        <button class="radio-dot" type="submit" aria-label="Jadikan {{.Label}} sebagai alamat utama"></button>
+      </form>
+      {{end}}
+
+      <div class="address-card__body">
+        <div class="address-card__top">
+          <span class="address-card__name">{{.RecipientName}}</span>
+          <span class="address-card__phone">{{phone .Phone}}</span>
+        </div>
+        <p class="address-card__lines">
+          {{.StreetAddress}}
+          <span class="address-card__region">{{.Village}}, {{.District}}, {{.City}}, {{.Province}}, {{.PostalCode}}</span>
+        </p>
+        <div class="address-card__tags">
+          <span class="chip">{{.Label}}</span>
+          {{if .IsPrimary}}<span class="badge">Utama</span>{{end}}
+        </div>
+        <div class="address-card__actions">
+          <a class="link-btn" href="/account/addresses/{{.ID}}/edit">{{icon "edit"}}Ubah</a>
+          {{if not .IsPrimary}}
+          <form method="post" action="/account/addresses/{{.ID}}/primary"
+                hx-post="/account/addresses/{{.ID}}/primary" hx-target="#address-list" hx-swap="outerHTML">
+            <button class="link-btn" type="submit">Jadikan Utama</button>
+          </form>
+          {{end}}
+          {{with .MapsURL}}<a class="link-btn" href="{{.}}" target="_blank" rel="noopener noreferrer">{{icon "external"}}Peta</a>{{end}}
+          <form method="post" action="/account/addresses/{{.ID}}/delete"
+                hx-post="/account/addresses/{{.ID}}/delete" hx-target="#address-list" hx-swap="outerHTML"
+                hx-confirm="Hapus alamat {{.Label}}?">
+            <button class="link-btn link-btn--danger" type="submit">{{icon "trash"}}Hapus</button>
+          </form>
+        </div>
+      </div>
+    </article>
+    {{end}}
+  </div>
+  {{else}}
+  <div class="empty-state">
+    {{icon "map-pin"}}
+    <h2>Belum ada alamat</h2>
+    <p class="muted">Tambahkan alamat pengiriman agar checkout nanti lebih cepat.</p>
+  </div>
+  {{end}}
+
+  <div class="list-footer">
+    {{if lt (len .Data.Addresses) .Data.Max}}
+    <a class="btn btn--dashed" href="/account/addresses/new">{{icon "plus"}}Tambah Alamat Baru</a>
+    {{end}}
+    <p class="list-footer__note">{{len .Data.Addresses}} dari {{.Data.Max}} alamat tersimpan</p>
+  </div>
+</div>
+{{end}}

@@ -9,14 +9,22 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"ecommerce/internal/auth"
 	"ecommerce/internal/config"
 	"ecommerce/internal/view"
 	"ecommerce/web"
 )
 
-// newTestRouter uses the embedded templates/static, exactly like production.
-// The DB is nil, so /readyz is not exercised here.
+// newTestRouter builds the production router (embedded templates, production
+// headers) without a database: only routes that never query it work.
 func newTestRouter(t *testing.T) http.Handler {
+	return buildRouter(t, nil, config.EnvProduction)
+}
+
+// buildRouter uses the embedded templates/static, exactly like production.
+func buildRouter(t *testing.T, db *pgxpool.Pool, env string) http.Handler {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	tpl, _ := fs.Sub(web.FS, "templates")
@@ -26,13 +34,20 @@ func newTestRouter(t *testing.T) http.Handler {
 	if err != nil {
 		t.Fatal(err)
 	}
-	renderer, err := view.New(tpl, assets, view.App{Name: "Toko Uji"}, log)
+	renderer, err := view.New(view.Config{
+		FS:          tpl,
+		Assets:      assets,
+		App:         view.App{Name: "Toko Uji", Dev: env != config.EnvProduction},
+		Log:         log,
+		CurrentUser: auth.CurrentUser,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return NewRouter(Deps{
-		Config: &config.Config{Env: config.EnvProduction},
+		Config: &config.Config{Env: env, Session: config.Session{Secret: []byte("0123456789abcdef0123456789abcdef")}},
 		Log:    log,
+		DB:     db,
 		View:   renderer,
 		Assets: assets,
 	})

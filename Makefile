@@ -2,7 +2,7 @@ APP     := ecommerce
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: run build build-arm64 test vet fmt tidy migrate migrate-status sqlc
+.PHONY: run build build-arm64 test test-db vet fmt tidy migrate migrate-status sqlc
 
 ## run: start in development mode (reads .env, templates reload from disk)
 run:
@@ -34,6 +34,11 @@ migrate:
 migrate-status:
 	go run ./cmd/web migrate status
 
-## sqlc: regenerate typed queries (requires the sqlc CLI)
+## test-db: also run database tests (TEST_DATABASE_URL must point to a test database)
+test-db:
+	@test -n "$(TEST_DATABASE_URL)" || (echo "set TEST_DATABASE_URL" && exit 1)
+	go test ./...
+
+## sqlc: regenerate typed queries (requires the sqlc CLI, v1.31.1)
 sqlc:
 	sqlc generate

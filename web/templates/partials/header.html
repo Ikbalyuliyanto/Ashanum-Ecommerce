@@ -1,7 +1,10 @@
 {{define "header" -}}
 <header class="site-header">
   <div class="container site-header__inner">
-    <a class="brand" href="/">{{.App.Name}}</a>
+    <a class="brand" href="/" aria-label="{{.App.Name}} — beranda">
+      <img class="brand__mark" src="{{asset "icons/favicon.png"}}" alt="" width="32" height="32">
+      <span class="brand__word">ASHANUM</span>
+    </a>
     {{template "navbar" .}}
   </div>
 </header>

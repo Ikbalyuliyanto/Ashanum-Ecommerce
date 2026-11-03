@@ -1,0 +1,47 @@
+{{template "base" .}}
+
+{{define "title"}}Akun Saya · {{.App.Name}}{{end}}
+
+{{define "content"}}
+<div class="account">
+  <section class="account-hero">
+    <span class="avatar" aria-hidden="true">{{initial .Data.DisplayName}}</span>
+    <div>
+      <h1 class="account-hero__name">{{.Data.DisplayName}}</h1>
+      <p class="account-hero__email">{{.Data.Email}}</p>
+      <a class="account-hero__edit" href="/account/profile">Ubah profil {{icon "chevron-right"}}</a>
+    </div>
+  </section>
+
+  <section class="card" aria-labelledby="orders-title">
+    <div class="card__head">
+      <h2 class="card__title" id="orders-title">Pesanan Saya</h2>
+      <span class="soon">Segera hadir</span>
+    </div>
+    <div class="shortcuts">
+      <div class="shortcut" aria-disabled="true">{{icon "wallet"}}<span>Belum Bayar</span></div>
+      <div class="shortcut" aria-disabled="true">{{icon "package"}}<span>Dikemas</span></div>
+      <div class="shortcut" aria-disabled="true">{{icon "truck"}}<span>Dikirim</span></div>
+      <div class="shortcut" aria-disabled="true">{{icon "check-circle"}}<span>Selesai</span></div>
+      <div class="shortcut" aria-disabled="true">{{icon "x-circle"}}<span>Dibatalkan</span></div>
+      <div class="shortcut" aria-disabled="true">{{icon "rotate"}}<span>Pengembalian</span></div>
+    </div>
+  </section>
+
+  <section class="card" aria-label="Menu akun">
+    <ul class="menu-list">
+      <li><a class="menu-item" href="/account/profile">{{icon "user"}}<span class="menu-item__label">Profil Saya</span><span class="menu-item__chevron">{{icon "chevron-right"}}</span></a></li>
+      <li><a class="menu-item" href="/account/addresses">{{icon "map-pin"}}<span class="menu-item__label">Alamat Saya</span><span class="menu-item__chevron">{{icon "chevron-right"}}</span></a></li>
+      <li><div class="menu-item" aria-disabled="true">{{icon "ticket"}}<span class="menu-item__label">Voucher Saya</span><span class="soon">Segera</span></div></li>
+      <li><div class="menu-item" aria-disabled="true">{{icon "star"}}<span class="menu-item__label">Ulasan Saya</span><span class="soon">Segera</span></div></li>
+      <li><div class="menu-item" aria-disabled="true">{{icon "settings"}}<span class="menu-item__label">Pengaturan Akun</span><span class="soon">Segera</span></div></li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <form method="post" action="/logout">
+      <button class="menu-item menu-item--danger" type="submit">{{icon "log-out"}}<span class="menu-item__label">Keluar</span></button>
+    </form>
+  </section>
+</div>
+{{end}}

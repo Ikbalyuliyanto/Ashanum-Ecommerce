@@ -1,0 +1,8 @@
+{{/* Mobile tab bar on top-level pages. Kategori/Keranjang tabs are added in
+     the phases that build them. */}}
+{{define "bottom-nav" -}}
+<nav class="bottom-nav" aria-label="Navigasi bawah">
+  <a class="bottom-nav__item{{if eq .Path "/"}} is-active{{end}}" href="/"{{if eq .Path "/"}} aria-current="page"{{end}}>{{icon "home"}}<span>Beranda</span></a>
+  <a class="bottom-nav__item{{if hasPrefix .Path "/account"}} is-active{{end}}" href="/account"{{if hasPrefix .Path "/account"}} aria-current="page"{{end}}>{{icon "user"}}<span>Akun</span></a>
+</nav>
+{{- end}}

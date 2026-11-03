@@ -32,25 +32,37 @@ type App struct {
 
 // Page is the root value passed to every template.
 type Page struct {
-	App  App
-	Path string
-	Data any
+	App   App
+	Path  string
+	User  any    // signed-in user or nil; see Config.CurrentUser
+	Flash *Flash // one-time message from the previous request
+	Data  any
+}
+
+type Config struct {
+	FS     fs.FS
+	Assets *Assets
+	App    App
+	Log    *slog.Logger
+	// CurrentUser returns the signed-in user for the header, or nil. It is a
+	// hook so this package stays independent of the auth module.
+	CurrentUser func(*http.Request) any
 }
 
 type Renderer struct {
-	fsys   fs.FS
-	app    App
-	assets *Assets
-	log    *slog.Logger
-	pages  map[string]*template.Template
+	cfg   Config
+	pages map[string]*template.Template
 }
 
 var bufPool = sync.Pool{New: func() any { return new(bytes.Buffer) }}
 
-// New parses all templates. In development (app.Dev) templates are parsed
+// New parses all templates. In development (App.Dev) templates are parsed
 // again on each render so edits show up without a restart.
-func New(fsys fs.FS, assets *Assets, app App, log *slog.Logger) (*Renderer, error) {
-	r := &Renderer{fsys: fsys, app: app, assets: assets, log: log}
+func New(cfg Config) (*Renderer, error) {
+	if cfg.CurrentUser == nil {
+		cfg.CurrentUser = func(*http.Request) any { return nil }
+	}
+	r := &Renderer{cfg: cfg}
 	pages, err := r.parse()
 	if err != nil {
 		return nil, err
@@ -61,19 +73,25 @@ func New(fsys fs.FS, assets *Assets, app App, log *slog.Logger) (*Renderer, erro
 
 func (r *Renderer) funcs() template.FuncMap {
 	return template.FuncMap{
-		"asset":       r.assets.URL,
+		"asset":       r.cfg.Assets.URL,
+		"icon":        r.icon,
 		"currentYear": func() int { return time.Now().Year() },
+		"dict":        dict,
+		"phone":       FormatPhone,
+		"phoneLocal":  LocalPhone,
+		"initial":     initial,
+		"hasPrefix":   strings.HasPrefix,
 	}
 }
 
 func (r *Renderer) parse() (map[string]*template.Template, error) {
-	shared, err := template.New("").Funcs(r.funcs()).ParseFS(r.fsys, "layouts/*.html", "partials/*.html")
+	shared, err := template.New("").Funcs(r.funcs()).ParseFS(r.cfg.FS, "layouts/*.html", "partials/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("view: parse layouts/partials: %w", err)
 	}
 
 	pages := make(map[string]*template.Template)
-	err = fs.WalkDir(r.fsys, ".", func(p string, d fs.DirEntry, err error) error {
+	err = fs.WalkDir(r.cfg.FS, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -81,7 +99,7 @@ func (r *Renderer) parse() (map[string]*template.Template, error) {
 			strings.HasPrefix(p, "layouts/") || strings.HasPrefix(p, "partials/") {
 			return nil
 		}
-		src, err := fs.ReadFile(r.fsys, p)
+		src, err := fs.ReadFile(r.cfg.FS, p)
 		if err != nil {
 			return err
 		}
@@ -104,7 +122,7 @@ func (r *Renderer) parse() (map[string]*template.Template, error) {
 
 func (r *Renderer) lookup(name string) (*template.Template, error) {
 	pages := r.pages
-	if r.app.Dev {
+	if r.cfg.App.Dev {
 		var err error
 		if pages, err = r.parse(); err != nil {
 			return nil, err
@@ -118,14 +136,15 @@ func (r *Renderer) lookup(name string) (*template.Template, error) {
 }
 
 // Render writes a full page, e.g. Render(w, req, 200, "home/index", data).
+// It also consumes a pending flash message.
 func (r *Renderer) Render(w http.ResponseWriter, req *http.Request, status int, page string, data any) {
-	r.execute(w, req, status, page, "page:"+page, data)
+	r.execute(w, req, status, page, "page:"+page, data, r.takeFlash(w, req))
 }
 
 // Fragment writes one {{define}} block from a page's template set, for HTMX
 // responses that swap part of the page.
 func (r *Renderer) Fragment(w http.ResponseWriter, req *http.Request, status int, page, block string, data any) {
-	r.execute(w, req, status, page, block, data)
+	r.execute(w, req, status, page, block, data, nil)
 }
 
 // Error renders the shared error page for the given status code.
@@ -133,9 +152,15 @@ func (r *Renderer) Error(w http.ResponseWriter, req *http.Request, status int) {
 	r.Render(w, req, status, "errors/error", ErrorData(status))
 }
 
+// ServerError logs err and renders the 500 page.
+func (r *Renderer) ServerError(w http.ResponseWriter, req *http.Request, err error) {
+	r.cfg.Log.Error("request failed", "method", req.Method, "path", req.URL.Path, "error", err)
+	r.Error(w, req, http.StatusInternalServerError)
+}
+
 // execute renders into a pooled buffer first, so a template error never sends
 // a half-written page with a 200 status.
-func (r *Renderer) execute(w http.ResponseWriter, req *http.Request, status int, page, name string, data any) {
+func (r *Renderer) execute(w http.ResponseWriter, req *http.Request, status int, page, name string, data any, flash *Flash) {
 	t, err := r.lookup(page)
 	if err != nil {
 		r.fail(w, req, err)
@@ -146,7 +171,13 @@ func (r *Renderer) execute(w http.ResponseWriter, req *http.Request, status int,
 	buf.Reset()
 	defer bufPool.Put(buf)
 
-	root := Page{App: r.app, Path: req.URL.Path, Data: data}
+	root := Page{
+		App:   r.cfg.App,
+		Path:  req.URL.Path,
+		User:  r.cfg.CurrentUser(req),
+		Flash: flash,
+		Data:  data,
+	}
 	if err := t.ExecuteTemplate(buf, name, root); err != nil {
 		r.fail(w, req, err)
 		return
@@ -158,12 +189,23 @@ func (r *Renderer) execute(w http.ResponseWriter, req *http.Request, status int,
 }
 
 func (r *Renderer) fail(w http.ResponseWriter, req *http.Request, err error) {
-	r.log.Error("render failed", "path", req.URL.Path, "error", err)
+	r.cfg.Log.Error("render failed", "path", req.URL.Path, "error", err)
 	http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+}
+
+func (r *Renderer) icon(name string) template.HTML {
+	href := template.HTMLEscapeString(r.cfg.Assets.URL("icons/sprite.svg") + "#" + name)
+	return template.HTML(`<svg class="icon" aria-hidden="true" focusable="false"><use href="` + href + `"></use></svg>`)
 }
 
 // IsHTMX reports whether the request was sent by HTMX (HX-Request header).
 func IsHTMX(r *http.Request) bool { return r.Header.Get("HX-Request") == "true" }
+
+// ParseForm parses a urlencoded form body limited to 64 KiB.
+func ParseForm(w http.ResponseWriter, r *http.Request) error {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	return r.ParseForm()
+}
 
 type ErrorInfo struct {
 	Status  int
@@ -182,7 +224,47 @@ func ErrorData(status int) ErrorInfo {
 	case http.StatusForbidden:
 		d.Title, d.Message = "Akses ditolak", "Anda tidak memiliki izin untuk melakukan aksi ini."
 	case http.StatusTooManyRequests:
-		d.Title, d.Message = "Terlalu banyak permintaan", "Silakan tunggu sebentar lalu coba lagi."
+		d.Title, d.Message = "Terlalu banyak percobaan", "Silakan tunggu beberapa menit lalu coba lagi."
 	}
 	return d
+}
+
+func dict(kv ...any) (map[string]any, error) {
+	if len(kv)%2 != 0 {
+		return nil, fmt.Errorf("dict: odd number of arguments")
+	}
+	m := make(map[string]any, len(kv)/2)
+	for i := 0; i < len(kv); i += 2 {
+		k, ok := kv[i].(string)
+		if !ok {
+			return nil, fmt.Errorf("dict: key %v is not a string", kv[i])
+		}
+		m[k] = kv[i+1]
+	}
+	return m, nil
+}
+
+// FormatPhone displays a stored +628… number as "+62 812-3456-7890".
+func FormatPhone(e164 string) string {
+	n, ok := strings.CutPrefix(e164, "+62")
+	if !ok || len(n) < 8 {
+		return e164
+	}
+	return "+62 " + n[:3] + "-" + n[3:7] + "-" + n[7:]
+}
+
+// LocalPhone turns a stored +628… number back into 08… for form inputs.
+func LocalPhone(e164 string) string {
+	if n, ok := strings.CutPrefix(e164, "+62"); ok {
+		return "0" + n
+	}
+	return e164
+}
+
+// initial returns the upper-case first letter of s, for avatars.
+func initial(s string) string {
+	for _, r := range s {
+		return strings.ToUpper(string(r))
+	}
+	return "?"
 }

@@ -1,0 +1,33 @@
+{{template "base" .}}
+
+{{define "title"}}Daftar · {{.App.Name}}{{end}}
+{{define "body-class"}}page-auth{{end}}
+
+{{define "content"}}
+<div class="auth">
+  <div class="auth-card">
+    <a class="auth-brand" href="/">
+      <img src="{{asset "icons/favicon.png"}}" alt="" width="56" height="56">
+      <span>ASHANUM</span>
+    </a>
+    <h1 class="auth-title">Daftar</h1>
+    <p class="auth-subtitle">Buat akun untuk menyimpan alamat dan memantau pesanan.</p>
+
+    <form method="post" action="/register">
+      <input type="hidden" name="next" value="{{.Data.Next}}">
+      {{template "field" (dict "ID" "email" "Name" "email" "Label" "Email" "Type" "email" "Value" .Data.Email
+          "Auto" "email" "Mode" "email" "Placeholder" "nama@email.com" "Required" true
+          "Error" (index .Data.Errors "email"))}}
+      {{template "field" (dict "ID" "password" "Name" "password" "Label" "Password" "Type" "password" "Value" ""
+          "Auto" "new-password" "Min" 8 "Required" true "Hint" "Minimal 8 karakter."
+          "Error" (index .Data.Errors "password"))}}
+      {{template "field" (dict "ID" "password_confirm" "Name" "password_confirm" "Label" "Ulangi Password" "Type" "password" "Value" ""
+          "Auto" "new-password" "Min" 8 "Required" true
+          "Error" (index .Data.Errors "password_confirm"))}}
+      <button class="btn btn--primary btn--block" type="submit">Daftar</button>
+    </form>
+
+    <p class="auth-switch">Sudah punya akun? <a href="/login{{if ne .Data.Next "/"}}?next={{.Data.Next}}{{end}}">Masuk</a></p>
+  </div>
+</div>
+{{end}}

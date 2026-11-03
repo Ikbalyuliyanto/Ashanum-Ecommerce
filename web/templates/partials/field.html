@@ -1,0 +1,24 @@
+{{/* Text input with label, hint and server-side error.
+     Usage: {{template "field" (dict "ID" "email" "Name" "email" "Label" "Email" "Value" .X
+            "Type" "email" "Auto" "email" "Required" true "Error" (index .Errors "email"))}}
+     Optional keys: Type Auto Mode Placeholder Max Min Pattern List Required Optional Hint Error. */}}
+{{define "field" -}}
+<div class="field">
+  <label class="field__label" for="{{.ID}}">{{.Label}}{{if .Optional}} <span class="field__optional">(opsional)</span>{{end}}</label>
+  <input class="input{{if .Error}} is-invalid{{end}}" id="{{.ID}}" name="{{.Name}}" type="{{or .Type "text"}}" value="{{.Value}}"
+    {{- with .Auto}} autocomplete="{{.}}"{{end}}
+    {{- with .Mode}} inputmode="{{.}}"{{end}}
+    {{- with .Placeholder}} placeholder="{{.}}"{{end}}
+    {{- with .Max}} maxlength="{{.}}"{{end}}
+    {{- with .Min}} minlength="{{.}}"{{end}}
+    {{- with .Pattern}} pattern="{{.}}"{{end}}
+    {{- with .List}} list="{{.}}"{{end}}
+    {{- if .Required}} required{{end}}
+    {{- if .Error}} aria-invalid="true" aria-describedby="{{.ID}}-error"{{else if .Hint}} aria-describedby="{{.ID}}-hint"{{end}}>
+  {{- if .Error}}
+  <p class="field__error" id="{{.ID}}-error">{{.Error}}</p>
+  {{- else if .Hint}}
+  <p class="field__hint" id="{{.ID}}-hint">{{.Hint}}</p>
+  {{- end}}
+</div>
+{{- end}}

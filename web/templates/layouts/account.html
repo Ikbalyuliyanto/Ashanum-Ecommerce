@@ -1,0 +1,12 @@
+{{/* Sub-pages of "Akun Saya": a back bar plus the page body.
+     Pages set {{define "content"}}{{template "account-layout" .}}{{end}}
+     and define "account-title" and "account-main" (optionally "account-back"). */}}
+{{define "account-layout" -}}
+<div class="account">
+  <div class="account__bar">
+    <a class="account__back" href="{{block "account-back" .}}/account{{end}}" aria-label="Kembali">{{icon "chevron-left"}}</a>
+    <h1 class="account__title">{{template "account-title" .}}</h1>
+  </div>
+  {{template "account-main" .}}
+</div>
+{{- end}}

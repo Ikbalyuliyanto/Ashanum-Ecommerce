@@ -39,7 +39,7 @@ func TestEnvExampleIsValid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, k := range []string{"APP_ENV", "APP_HOST", "APP_PORT", "APP_NAME", "DATABASE_URL", "DB_MAX_CONNS", "DB_MIN_CONNS"} {
+	for _, k := range []string{"APP_ENV", "APP_HOST", "APP_PORT", "APP_NAME", "DATABASE_URL", "DB_MAX_CONNS", "DB_MIN_CONNS", "SESSION_SECRET"} {
 		t.Setenv(k, "")
 		os.Unsetenv(k)
 	}
@@ -64,11 +64,38 @@ func TestLoadValidation(t *testing.T) {
 	t.Setenv("APP_ENV", "production")
 	t.Setenv("APP_PORT", "9000")
 	t.Setenv("DATABASE_URL", "postgres://u:p@db:5432/shop")
+	t.Setenv("SESSION_SECRET", "0123456789abcdef0123456789abcdef")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !cfg.IsProduction() || cfg.Addr() != "127.0.0.1:9000" || cfg.Database.MaxConns != 10 {
 		t.Errorf("unexpected config: %+v", cfg)
+	}
+}
+
+func TestSessionSecretRules(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("DATABASE_URL", "postgres://u:p@db:5432/shop")
+
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("SESSION_SECRET", "")
+	if _, err := Load(); err == nil {
+		t.Error("production without SESSION_SECRET must fail")
+	}
+
+	t.Setenv("SESSION_SECRET", "too-short")
+	if _, err := Load(); err == nil {
+		t.Error("short SESSION_SECRET must fail")
+	}
+
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("SESSION_SECRET", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Session.Ephemeral || len(cfg.Session.Secret) != minSessionSecret {
+		t.Errorf("development without secret should get an ephemeral one: %+v", cfg.Session)
 	}
 }

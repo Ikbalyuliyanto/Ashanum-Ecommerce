@@ -1,0 +1,42 @@
+{{template "base" .}}
+
+{{define "title"}}Profil Saya · {{.App.Name}}{{end}}
+{{define "content"}}{{template "account-layout" .}}{{end}}
+{{define "account-title"}}Profil Saya{{end}}
+{{define "account-main"}}{{template "profile-form" .}}{{end}}
+
+{{/* Swapped in place by HTMX after saving. */}}
+{{define "profile-form"}}
+<form id="profile-form" class="card" method="post" action="/account/profile"
+      hx-post="/account/profile" hx-target="this" hx-swap="outerHTML">
+  {{if .Data.Saved}}<div class="alert alert--success" role="status">Profil berhasil disimpan.</div>{{end}}
+  {{if .Data.Errors}}<div class="alert alert--error" role="alert">Periksa kembali isian yang ditandai.</div>{{end}}
+
+  <div class="field">
+    <label class="field__label" for="email">Email</label>
+    <input class="input" id="email" type="email" value="{{.Data.Email}}" readonly>
+  </div>
+  <div class="field-row">
+    {{template "field" (dict "ID" "first_name" "Name" "first_name" "Label" "Nama Depan" "Value" .Data.Form.FirstName
+        "Auto" "given-name" "Max" 50 "Required" true "Error" (index .Data.Errors "first_name"))}}
+    {{template "field" (dict "ID" "last_name" "Name" "last_name" "Label" "Nama Belakang" "Value" .Data.Form.LastName
+        "Auto" "family-name" "Max" 50 "Optional" true "Error" (index .Data.Errors "last_name"))}}
+  </div>
+  {{template "field" (dict "ID" "phone" "Name" "phone" "Label" "Nomor HP" "Type" "tel" "Value" .Data.Form.Phone
+      "Auto" "tel-national" "Mode" "tel" "Placeholder" "081234567890" "Optional" true
+      "Error" (index .Data.Errors "phone"))}}
+
+  <fieldset class="field">
+    <legend class="field__label">Jenis Kelamin <span class="field__optional">(opsional)</span></legend>
+    <div class="choice-group">
+      <label class="choice"><input type="radio" name="gender" value="LAKI_LAKI"{{if eq .Data.Form.Gender "LAKI_LAKI"}} checked{{end}}><span>Laki-laki</span></label>
+      <label class="choice"><input type="radio" name="gender" value="PEREMPUAN"{{if eq .Data.Form.Gender "PEREMPUAN"}} checked{{end}}><span>Perempuan</span></label>
+    </div>
+    {{with index .Data.Errors "gender"}}<p class="field__error">{{.}}</p>{{end}}
+  </fieldset>
+
+  <div class="form-actions">
+    <button class="btn btn--primary btn--block" type="submit">Simpan Profil</button>
+  </div>
+</form>
+{{end}}

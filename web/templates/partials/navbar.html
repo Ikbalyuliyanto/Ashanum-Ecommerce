@@ -1,6 +1,12 @@
-{{/* Links are added by the phase that ships each page (products, cart, account). */}}
+{{/* Category, search and cart links arrive with the phases that build them. */}}
 {{define "navbar" -}}
 <nav class="nav" aria-label="Navigasi utama">
-  <a class="nav__link{{if eq .Path "/"}} is-active{{end}}" href="/">Beranda</a>
+  <a class="nav__link nav__hide-sm{{if eq .Path "/"}} is-active{{end}}" href="/">{{icon "home"}}<span>Beranda</span></a>
+  {{- if .User}}
+  <a class="nav__link{{if hasPrefix .Path "/account"}} is-active{{end}}" href="/account">{{icon "user"}}<span>Akun Saya</span></a>
+  {{- else}}
+  <a class="nav__link" href="/login">Masuk</a>
+  <a class="nav__link nav__link--primary" href="/register">Daftar</a>
+  {{- end}}
 </nav>
 {{- end}}

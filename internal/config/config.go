@@ -7,6 +7,7 @@ package config
 
 import (
 	"bufio"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"os"
@@ -26,6 +27,7 @@ type Config struct {
 	Name string
 
 	Database Database
+	Session  Session
 }
 
 type Database struct {
@@ -33,6 +35,17 @@ type Database struct {
 	MaxConns int32
 	MinConns int32
 }
+
+// Session holds the key used to HMAC session tokens before storing them.
+type Session struct {
+	Secret []byte
+	// Ephemeral is true when no SESSION_SECRET was set in development and a
+	// random one was generated: sessions then end when the process restarts.
+	Ephemeral bool
+}
+
+// minSessionSecret is the minimum SESSION_SECRET length (bytes).
+const minSessionSecret = 32
 
 func (c *Config) IsProduction() bool { return c.Env == EnvProduction }
 
@@ -49,7 +62,7 @@ func Load() (*Config, error) {
 		Env:  getString("APP_ENV", EnvDevelopment),
 		Host: getString("APP_HOST", "127.0.0.1"),
 		Port: getInt("APP_PORT", 8080, &errs),
-		Name: getString("APP_NAME", "Toko"),
+		Name: getString("APP_NAME", "Ashanum"),
 		Database: Database{
 			URL:      getString("DATABASE_URL", ""),
 			MaxConns: int32(getInt("DB_MAX_CONNS", 10, &errs)),
@@ -71,6 +84,19 @@ func Load() (*Config, error) {
 	}
 	if cfg.Database.MinConns < 0 || cfg.Database.MinConns > cfg.Database.MaxConns {
 		errs = append(errs, errors.New("DB_MIN_CONNS must be between 0 and DB_MAX_CONNS"))
+	}
+
+	switch secret := getString("SESSION_SECRET", ""); {
+	case secret != "" && len(secret) < minSessionSecret:
+		errs = append(errs, fmt.Errorf("SESSION_SECRET must be at least %d characters", minSessionSecret))
+	case secret != "":
+		cfg.Session.Secret = []byte(secret)
+	case cfg.Env == EnvProduction:
+		errs = append(errs, errors.New("SESSION_SECRET is required in production"))
+	default:
+		cfg.Session.Secret = make([]byte, minSessionSecret)
+		rand.Read(cfg.Session.Secret)
+		cfg.Session.Ephemeral = true
 	}
 
 	if err := errors.Join(errs...); err != nil {

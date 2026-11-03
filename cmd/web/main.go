@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"ecommerce/internal/auth"
 	"ecommerce/internal/config"
 	"ecommerce/internal/database"
 	"ecommerce/internal/server"
@@ -77,9 +78,18 @@ func serve(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("static assets: %w", err)
 	}
-	renderer, err := view.New(templatesFS, assets, view.App{Name: cfg.Name, Dev: !cfg.IsProduction()}, log)
+	renderer, err := view.New(view.Config{
+		FS:          templatesFS,
+		Assets:      assets,
+		App:         view.App{Name: cfg.Name, Dev: !cfg.IsProduction()},
+		Log:         log,
+		CurrentUser: auth.CurrentUser,
+	})
 	if err != nil {
 		return err
+	}
+	if cfg.Session.Ephemeral {
+		log.Warn("SESSION_SECRET not set: using a random one, sessions end on restart")
 	}
 
 	handler := server.NewRouter(server.Deps{

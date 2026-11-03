@@ -4,7 +4,12 @@
 
 {{define "content"}}
 <section class="hero">
-  <h1 class="hero__title">Selamat datang di {{.App.Name}}</h1>
-  <p class="hero__text">Katalog produk sedang kami siapkan. Silakan kembali lagi nanti.</p>
+  <h1 class="hero__title">Belanja nyaman di {{.App.Name}}</h1>
+  <p class="hero__text">Katalog produk sedang kami siapkan. Sambil menunggu, buat akun dan simpan alamat pengiriman Anda.</p>
+  {{if .User}}
+  <a class="btn" href="/account">Ke Akun Saya</a>
+  {{else}}
+  <a class="btn" href="/register">Daftar Sekarang</a>
+  {{end}}
 </section>
 {{end}}

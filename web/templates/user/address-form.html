@@ -1,0 +1,86 @@
+{{template "base" .}}
+
+{{define "title"}}{{if .Data.ID}}Ubah Alamat{{else}}Alamat Baru{{end}} · {{.App.Name}}{{end}}
+{{define "content"}}{{template "account-layout" .}}{{end}}
+{{define "account-back"}}/account/addresses{{end}}
+{{define "account-title"}}{{if .Data.ID}}Ubah Alamat{{else}}Alamat Baru{{end}}{{end}}
+
+{{define "account-main"}}
+{{with .Data.Error}}<div class="alert alert--error" role="alert">{{.}}</div>{{end}}
+{{if .Data.Errors}}<div class="alert alert--error" role="alert">Periksa kembali isian yang ditandai.</div>{{end}}
+
+<form method="post" action="{{if .Data.ID}}/account/addresses/{{.Data.ID}}{{else}}/account/addresses{{end}}">
+  <section class="card">
+    <h2 class="card__title form-section-title">Kontak</h2>
+    {{template "field" (dict "ID" "recipient_name" "Name" "recipient_name" "Label" "Nama Penerima" "Value" .Data.Form.RecipientName
+        "Auto" "name" "Max" 50 "Required" true "Error" (index .Data.Errors "recipient_name"))}}
+    {{template "field" (dict "ID" "phone" "Name" "phone" "Label" "Nomor HP" "Type" "tel" "Value" .Data.Form.Phone
+        "Auto" "tel-national" "Mode" "tel" "Placeholder" "081234567890" "Required" true
+        "Error" (index .Data.Errors "phone"))}}
+  </section>
+
+  <section class="card">
+    <h2 class="card__title form-section-title">Alamat</h2>
+    {{template "field" (dict "ID" "province" "Name" "province" "Label" "Provinsi" "Value" .Data.Form.Province
+        "Auto" "address-level1" "Max" 60 "Required" true "Error" (index .Data.Errors "province"))}}
+    {{template "field" (dict "ID" "city" "Name" "city" "Label" "Kabupaten/Kota" "Value" .Data.Form.City
+        "Auto" "address-level2" "Max" 60 "Required" true "Error" (index .Data.Errors "city"))}}
+    <div class="field-row">
+      {{template "field" (dict "ID" "district" "Name" "district" "Label" "Kecamatan" "Value" .Data.Form.District
+          "Auto" "address-level3" "Max" 60 "Required" true "Error" (index .Data.Errors "district"))}}
+      {{template "field" (dict "ID" "village" "Name" "village" "Label" "Kelurahan/Desa" "Value" .Data.Form.Village
+          "Max" 60 "Required" true "Error" (index .Data.Errors "village"))}}
+    </div>
+    {{template "field" (dict "ID" "postal_code" "Name" "postal_code" "Label" "Kode Pos" "Value" .Data.Form.PostalCode
+        "Auto" "postal-code" "Mode" "numeric" "Max" 5 "Pattern" "[0-9]{5}" "Required" true
+        "Error" (index .Data.Errors "postal_code"))}}
+    <div class="field">
+      <label class="field__label" for="street_address">Alamat Lengkap</label>
+      <textarea class="textarea{{if index .Data.Errors "street_address"}} is-invalid{{end}}" id="street_address" name="street_address"
+                autocomplete="street-address" maxlength="200" required aria-describedby="street_address-hint">{{.Data.Form.StreetAddress}}</textarea>
+      <p class="field__hint" id="street_address-hint">Nama jalan, nomor rumah, RT/RW, gedung, atau patokan.</p>
+      {{with index .Data.Errors "street_address"}}<p class="field__error">{{.}}</p>{{end}}
+    </div>
+  </section>
+
+  <section class="card">
+    <h2 class="card__title form-section-title">Detail Lainnya</h2>
+    {{template "field" (dict "ID" "label" "Name" "label" "Label" "Label Alamat" "Value" .Data.Form.Label
+        "List" "address-labels" "Max" 30 "Required" true "Hint" "Contoh: Rumah, Kantor, Kos."
+        "Error" (index .Data.Errors "label"))}}
+    <datalist id="address-labels">
+      <option value="Rumah"></option>
+      <option value="Kantor"></option>
+      <option value="Kos"></option>
+      <option value="Apartemen"></option>
+    </datalist>
+
+    <details class="disclosure"{{if or .Data.Form.MapsURL .Data.Form.Latitude (index .Data.Errors "maps_url") (index .Data.Errors "latitude") (index .Data.Errors "longitude")}} open{{end}}>
+      <summary>Titik lokasi (opsional)</summary>
+      {{template "field" (dict "ID" "maps_url" "Name" "maps_url" "Label" "Tautan Google Maps" "Type" "url" "Value" .Data.Form.MapsURL
+          "Mode" "url" "Placeholder" "https://maps.app.goo.gl/…" "Optional" true
+          "Error" (index .Data.Errors "maps_url"))}}
+      <div class="field-row">
+        {{template "field" (dict "ID" "latitude" "Name" "latitude" "Label" "Latitude" "Value" .Data.Form.Latitude
+            "Mode" "decimal" "Placeholder" "-6.2" "Optional" true "Error" (index .Data.Errors "latitude"))}}
+        {{template "field" (dict "ID" "longitude" "Name" "longitude" "Label" "Longitude" "Value" .Data.Form.Longitude
+            "Mode" "decimal" "Placeholder" "106.8" "Optional" true "Error" (index .Data.Errors "longitude"))}}
+      </div>
+    </details>
+
+    {{if .Data.IsPrimary}}
+    <p class="primary-note">{{icon "check-circle"}} Ini adalah alamat utama Anda.</p>
+    {{else}}
+    <label class="switch">
+      <span>Jadikan sebagai alamat utama</span>
+      <input type="checkbox" name="make_primary" value="1"{{if .Data.Form.MakePrimary}} checked{{end}}>
+      <span class="switch__track" aria-hidden="true"></span>
+    </label>
+    {{end}}
+  </section>
+
+  <div class="form-actions form-actions--sticky">
+    <button class="btn btn--primary btn--block" type="submit">Simpan Alamat</button>
+  </div>
+</form>
+{{end}}

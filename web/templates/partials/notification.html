@@ -1,0 +1,3 @@
+{{define "notification" -}}
+{{with .Flash}}<div class="alert alert--{{.Kind}}" role="status">{{.Message}}</div>{{end}}
+{{- end}}

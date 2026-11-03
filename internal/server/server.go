@@ -12,9 +12,12 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"ecommerce/internal/address"
+	"ecommerce/internal/auth"
 	"ecommerce/internal/config"
 	"ecommerce/internal/home"
 	"ecommerce/internal/middleware"
+	"ecommerce/internal/user"
 	"ecommerce/internal/view"
 )
 
@@ -26,9 +29,15 @@ type Deps struct {
 	Assets *view.Assets
 }
 
-// NewRouter builds the application handler. New modules register their
-// routes here, each through its own Routes method.
+// NewRouter is the composition root: it builds repositories, services and
+// handlers, then registers each module's routes through its Routes method.
 func NewRouter(d Deps) http.Handler {
+	authSvc := auth.NewService(auth.NewRepository(d.DB), d.Config.Session.Secret)
+	userSvc := user.NewService(user.NewRepository(d.DB))
+	addressSvc := address.NewService(address.NewRepository(d.DB))
+
+	authH := auth.NewHandler(authSvc, d.View, auth.NewCookieConfig(d.Config.IsProduction()), d.Log)
+
 	r := chi.NewRouter()
 
 	r.Use(
@@ -41,6 +50,7 @@ func NewRouter(d Deps) http.Handler {
 		middleware.CSRF(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			d.View.Error(w, req, http.StatusForbidden)
 		})),
+		authH.LoadSession,
 	)
 
 	r.NotFound(func(w http.ResponseWriter, req *http.Request) {
@@ -56,6 +66,13 @@ func NewRouter(d Deps) http.Handler {
 	r.Method(http.MethodHead, "/static/*", d.Assets)
 
 	home.NewHandler(d.View).Routes(r)
+	authH.Routes(r)
+
+	r.Group(func(r chi.Router) {
+		r.Use(auth.RequireUser)
+		user.NewHandler(userSvc, d.View).Routes(r)
+		address.NewHandler(addressSvc, d.View).Routes(r)
+	})
 
 	return r
 }

@@ -1,23 +1,28 @@
 {{define "base" -}}
+{{- $bottomNav := or (eq .Path "/") (eq .Path "/account") -}}
 <!doctype html>
 <html lang="id">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>{{block "title" .}}{{.App.Name}}{{end}}</title>
-  <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false}'>
-  <link rel="icon" href="{{asset "icons/favicon.svg"}}" type="image/svg+xml">
+  <meta name="theme-color" content="#8b5a00">
+  <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"422","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>
+  <link rel="icon" href="{{asset "icons/favicon.png"}}" type="image/png">
+  <link rel="apple-touch-icon" href="{{asset "icons/favicon.png"}}">
   <link rel="stylesheet" href="{{asset "css/app.css"}}">
   <script src="{{asset "js/htmx.min.js"}}" defer></script>
   {{- block "head" .}}{{end}}
 </head>
-<body>
+<body class="{{block "body-class" .}}{{end}}{{if $bottomNav}} has-bottom-nav{{end}}">
   <a class="skip-link" href="#main">Lewati ke konten</a>
   {{template "header" .}}
   <main id="main" class="container main">
+    {{template "notification" .}}
     {{block "content" .}}{{end}}
   </main>
   {{template "footer" .}}
+  {{if $bottomNav}}{{template "bottom-nav" .}}{{end}}
 </body>
 </html>
 {{- end}}

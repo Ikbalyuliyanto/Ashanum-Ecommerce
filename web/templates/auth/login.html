@@ -1,0 +1,31 @@
+{{template "base" .}}
+
+{{define "title"}}Masuk · {{.App.Name}}{{end}}
+{{define "body-class"}}page-auth{{end}}
+
+{{define "content"}}
+<div class="auth">
+  <div class="auth-card">
+    <a class="auth-brand" href="/">
+      <img src="{{asset "icons/favicon.png"}}" alt="" width="56" height="56">
+      <span>ASHANUM</span>
+    </a>
+    <h1 class="auth-title">Masuk</h1>
+    <p class="auth-subtitle">Selamat datang kembali! Masuk untuk melanjutkan belanja.</p>
+
+    {{with .Data.Error}}<div class="alert alert--error" role="alert">{{.}}</div>{{end}}
+
+    <form method="post" action="/login">
+      <input type="hidden" name="next" value="{{.Data.Next}}">
+      {{template "field" (dict "ID" "email" "Name" "email" "Label" "Email" "Type" "email" "Value" .Data.Email
+          "Auto" "email" "Mode" "email" "Placeholder" "nama@email.com" "Required" true)}}
+      {{template "field" (dict "ID" "password" "Name" "password" "Label" "Password" "Type" "password" "Value" ""
+          "Auto" "current-password" "Required" true)}}
+      <button class="btn btn--primary btn--block" type="submit">Masuk</button>
+    </form>
+
+    <div class="divider">Belum punya akun?</div>
+    <a class="btn btn--outline btn--block" href="/register{{if ne .Data.Next "/"}}?next={{.Data.Next}}{{end}}">Daftar Akun Baru</a>
+  </div>
+</div>
+{{end}}
