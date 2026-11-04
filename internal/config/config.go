@@ -34,6 +34,7 @@ type Config struct {
 	Database Database
 	Session  Session
 	Midtrans Midtrans
+	Returns  Returns
 }
 
 type Database struct {
@@ -64,6 +65,13 @@ const MidtransSandbox = "sandbox"
 // Enabled reports whether online payment is configured.
 func (m Midtrans) Enabled() bool { return m.ServerKey != "" }
 
+// Returns holds the return policy. WindowDays is a business setting (how
+// many days after an order is completed the buyer may ask for a return),
+// not a fixed rule.
+type Returns struct {
+	WindowDays int
+}
+
 // minSessionSecret is the minimum SESSION_SECRET length (bytes).
 const minSessionSecret = 32
 
@@ -88,6 +96,7 @@ func Load() (*Config, error) {
 			Env:       getString("MIDTRANS_ENV", MidtransSandbox),
 			ServerKey: getString("MIDTRANS_SERVER_KEY", ""),
 		},
+		Returns: Returns{WindowDays: getInt("RETURN_WINDOW_DAYS", 7, &errs)},
 		Database: Database{
 			URL:      getString("DATABASE_URL", ""),
 			MaxConns: int32(getInt("DB_MAX_CONNS", 10, &errs)),
@@ -112,6 +121,9 @@ func Load() (*Config, error) {
 	}
 
 	errs = append(errs, cfg.validatePayments()...)
+	if d := cfg.Returns.WindowDays; d < 1 || d > 365 {
+		errs = append(errs, fmt.Errorf("RETURN_WINDOW_DAYS must be between 1 and 365, got %d", d))
+	}
 
 	switch secret := getString("SESSION_SECRET", ""); {
 	case secret != "" && len(secret) < minSessionSecret:

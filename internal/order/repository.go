@@ -71,6 +71,7 @@ func (r *Repository) Get(ctx context.Context, userID int64, number string) (Orde
 		PaymentDueAt: row.PaymentDueAt,
 		PaidAt:       row.PaidAt,
 		CancelledAt:  row.CancelledAt,
+		CompletedAt:  row.CompletedAt,
 		Address: Address{
 			Label:         row.AddressLabel,
 			RecipientName: row.RecipientName,

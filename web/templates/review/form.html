@@ -1,0 +1,44 @@
+{{template "base" .}}
+
+{{define "title"}}{{if .Data.ReviewID}}Ubah Ulasan{{else}}Beri Ulasan{{end}} · {{.App.Name}}{{end}}
+{{define "content"}}{{template "account-layout" .}}{{end}}
+{{define "account-back"}}{{.Data.BackURL}}{{end}}
+{{define "account-title"}}{{if .Data.ReviewID}}Ubah Ulasan{{else}}Beri Ulasan{{end}}{{end}}
+
+{{define "account-main"}}
+{{$d := .Data}}
+{{if $d.Errors}}<div class="alert alert--error" role="alert">Periksa kembali isian yang ditandai.</div>{{end}}
+<form class="card review-form" method="post" action="{{if $d.ReviewID}}/account/reviews/{{$d.ReviewID}}{{else}}/account/reviews{{end}}">
+  {{with $d.Target}}
+  <div class="review-target">
+    <img src="{{img .ImageURL 72}}" alt="" width="64" height="64">
+    <div>
+      <p class="review-target__name">{{.ProductName}}</p>
+      {{with .VariantLabel}}<p class="review-target__variant">Varian: {{.}}</p>{{end}}
+      <p class="muted review-target__order">Pesanan {{.OrderNumber}}</p>
+    </div>
+  </div>
+  {{if not $d.ReviewID}}<input type="hidden" name="item" value="{{.OrderItemID}}">{{end}}
+  {{end}}
+  {{with $d.ReturnTo}}<input type="hidden" name="return_to" value="{{.}}">{{end}}
+
+  <fieldset class="rating-input">
+    <legend class="field__label">Nilai produk ini</legend>
+    {{/* Radios 5 → 1 in the DOM, shown 1 → 5 (CSS row-reverse), so
+         ":checked ~ label" lights the chosen star and the ones before it. */}}
+    <div class="rating-input__stars">
+      {{range $d.StarOptions}}<input type="radio" id="rating-{{.}}" name="rating" value="{{.}}"{{if eq . $d.Rating}} checked{{end}} required><label for="rating-{{.}}" title="{{.}} bintang"><span class="visually-hidden">{{.}} bintang</span><span aria-hidden="true">★</span></label>{{end}}
+    </div>
+    {{with index $d.Errors "rating"}}<p class="field__error" role="alert">{{.}}</p>{{end}}
+  </fieldset>
+
+  <div class="field">
+    <label class="field__label" for="comment">Ulasan <span class="field__optional">(opsional)</span></label>
+    <textarea class="textarea{{if index $d.Errors "comment"}} is-invalid{{end}}" id="comment" name="comment" rows="5" maxlength="1000"
+      placeholder="Bagaimana kualitas, ukuran, dan kesesuaian produknya?">{{$d.Comment}}</textarea>
+    {{with index $d.Errors "comment"}}<p class="field__error" role="alert">{{.}}</p>{{else}}<p class="field__hint">Maksimal 1.000 karakter. Jangan tulis nomor HP atau alamat.</p>{{end}}
+  </div>
+
+  <button class="btn btn--primary btn--block" type="submit">{{if $d.ReviewID}}Simpan Perubahan{{else}}Kirim Ulasan{{end}}</button>
+</form>
+{{end}}

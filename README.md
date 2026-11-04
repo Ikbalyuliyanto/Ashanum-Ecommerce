@@ -17,7 +17,7 @@ dilakukan per fase.
 | 4 | Cart, cart item, tambah/ubah/hapus, ringkasan, persiapan Buy Now | Selesai |
 | 5 | Checkout, order, snapshot alamat/produk, Beli Sekarang, riwayat & detail pesanan (shipping aggregator ditunda) | Selesai |
 | 6 | Pembayaran Midtrans Snap (**sandbox saja**), webhook, kedaluwarsa & pembatalan pesanan, pengembalian stok, reconcile | Selesai |
-| 7 | Riwayat order, review, return, refund | Belum |
+| 7 | Ulasan & rating, pengajuan pengembalian (refund/tukar barang), bukti (URL), status retur, fondasi domain refund | Selesai |
 | 8 | Admin, dashboard, laporan, pengaturan | Belum |
 | 9 | Security review, optimasi, load testing, deployment HG680P | Belum |
 
@@ -48,6 +48,7 @@ semuanya dibaca dari binary (embed).
 | `ecommerce` / `ecommerce serve` | Jalankan web server |
 | `ecommerce migrate` | Terapkan migrasi yang belum dijalankan |
 | `ecommerce migrate status` | Daftar migrasi dan waktu diterapkan |
+| `ecommerce recalculate-ratings` | Perbaiki cache rating produk dari `product_reviews` (alat perbaikan) |
 | `ecommerce reconcile-payments [-limit N]` | Sinkronkan pembayaran pending dengan Midtrans, batalkan pesanan lewat batas bayar (stok kembali), daftar pembayaran yang perlu ditinjau |
 | `ecommerce version` | Versi build |
 
@@ -147,6 +148,27 @@ dan `reconcile-payments` menanyakan status langsung ke Midtrans sehingga alur te
 scheduler terpasang; nanti bisa dipanggil systemd timer (mis. tiap 15 menit) dengan
 `EnvironmentFile` yang sama seperti service.
 
+### Ulasan & pengembalian (Fase 7)
+
+| Route | Keterangan |
+|-------|------------|
+| `GET /products/{slug}/reviews?page=N` | Semua ulasan produk (publik; HTMX "muat lagi") |
+| `GET /account/reviews?tab=pending` | Ulasan Saya / Belum Diulas |
+| `GET /account/reviews/new?item=<order_item_id>` · `POST /account/reviews` | Beri ulasan |
+| `GET /account/reviews/{id}/edit` · `POST /account/reviews/{id}` | Ubah ulasan sendiri |
+| `GET /account/returns` | Riwayat pengembalian |
+| `GET /account/returns/new?order=<nomor>` · `POST /account/returns` | Ajukan pengembalian dana / tukar barang |
+| `GET /account/returns/{nomor}` | Rincian & timeline pengembalian |
+| `POST /account/returns/{nomor}/cancel` | Batalkan pengajuan yang masih menunggu persetujuan |
+
+Ulasan dan pengembalian hanya untuk pesanan **COMPLETED** (pengembalian juga wajib sudah
+dibayar). Belum ada alur yang mengubah pesanan menjadi COMPLETED — itu datang bersama
+admin (Phase 8) dan pengiriman; test memakai fixture `testutil.CompleteOrder`. Tidak ada
+route admin: persetujuan dan langkah lanjut retur adalah method `returns.Service`.
+
+Batas pengajuan pengembalian: `RETURN_WINDOW_DAYS` (default 7) hari setelah
+`orders.completed_at` — kebijakan bisnis yang bisa diubah, bukan aturan tetap.
+
 ### Data demo (development)
 
 ```bash
@@ -198,6 +220,8 @@ internal/checkout/           checkout & pembuatan pesanan (transaksi, stok, snap
 internal/order/              Pesanan Saya: riwayat & rincian pesanan, halaman hasil pembayaran
 internal/payment/            pembayaran: attempt, webhook, status, batal/kedaluwarsa, stok kembali, reconcile
 internal/payment/midtrans/   klien Midtrans (Snap redirect + Core API status) dengan net/http, sandbox saja
+internal/review/             ulasan & rating produk (sumber kebenaran product_reviews)
+internal/returns/            pengajuan pengembalian dana/tukar barang, bukti, status, domain refund
 internal/validate/           aturan validasi input bersama (email, HP, nama, password)
 internal/database/dbgen/     kode hasil sqlc (jangan diedit manual)
 internal/testutil/           schema PostgreSQL terisolasi untuk test
@@ -331,6 +355,46 @@ dibiarkan untuk percobaan berikutnya. Pembayaran gagal/ditolak/kedaluwarsa sebel
 bayar → tombol "Bayar Lagi" membuat attempt baru (maks. 10); pesanan yang sudah
 dibatalkan tidak pernah dihidupkan lagi — pembeli membuat pesanan baru. Varian yang
 dipegang pesanan belum bayar tidak bisa dihapus (trigger database); nonaktifkan saja.
+
+**Ulasan & rating.** Satu ulasan per item pesanan (`UNIQUE(order_item_id)` + FK komposit
+item→pesanan→user), hanya untuk pesanan COMPLETED milik sendiri. `product_reviews` adalah
+sumber kebenaran; `products.rating_average/rating_count` hanya cache yang dihitung ulang
+(AVG/COUNT) di **transaksi yang sama** dengan setiap ulasan baru atau diubah, setelah
+baris produk dikunci — jadi dua ulasan bersamaan tidak saling menimpa agregat.
+`ecommerce recalculate-ratings` memperbaiki cache jika perlu. Nama pengulas disamarkan
+("S*** R********"); email, telepon, dan alamat tidak pernah tampil. Produk yang dihapus
+tidak menghapus ulasan (`product_id` jadi NULL; riwayat memakai snapshot item pesanan).
+Foto ulasan ditunda sampai ada uploader (rencana: tabel `review_images`, URL saja).
+
+**Pengembalian.** Jenis `REFUND` (Pengembalian Dana) atau `EXCHANGE` (Tukar Barang),
+alasan `DAMAGED | WRONG_ITEM | MISSING_ITEM | NOT_AS_DESCRIBED | VARIANT_ISSUE | OTHER`
+(OTHER wajib deskripsi). Syarat: pesanan milik user, COMPLETED, punya payment PAID, dan
+masih dalam batas waktu (jam server). Pengajuan dibuat dalam satu transaksi: kunci baris
+pesanan → kunci item pesanan terpilih (urut id) → jumlah dicek terhadap retur lain yang
+belum ditolak/dibatalkan → simpan retur, item, bukti. Dua pengajuan bersamaan tidak bisa
+melebihi jumlah yang dibeli. Nomor `RET-YYYYMMDD-NNNNNN` dari sequence (bukan PK).
+Nominal pengembalian dihitung server dari harga snapshot `order_items` × jumlah, hanya
+nilai barang — ongkos kirim, ongkir retur, dan biaya lain **tidak** dihitung; kebijakannya
+diputuskan setelah fase Shipping. Tukar barang tidak mengembalikan dana. Bukti berupa
+**tautan https saja** (maks. 5, tanpa file lokal/IP/kredensial); hanya gambar Cloudinary
+yang ditampilkan sebagai gambar (CSP), lainnya sebagai tautan. Uploader kelak cukup
+menghasilkan URL, service retur tidak berubah.
+
+**Status retur** (state machine, perubahan lain ditolak):
+REFUND `REQUESTED → APPROVED → WAITING_RETURN → ITEM_RECEIVED → REFUND_PENDING →
+REFUNDED → COMPLETED`; EXCHANGE `… → ITEM_RECEIVED → EXCHANGED → COMPLETED`;
+`REQUESTED → REJECTED` (alasan wajib); `REQUESTED | APPROVED | WAITING_RETURN → CANCELLED`.
+Pembeli hanya mengajukan dan boleh membatalkan selama REQUESTED. `Approve`, `Reject`,
+`MarkWaitingReturn`, `MarkItemReceived`, `PrepareRefund`, `CompleteRefund`,
+`CompleteExchange`, `Complete`, `Cancel` siap dipanggil admin (Phase 8); belum ada route.
+Setiap langkah tercatat di `return_events` (timeline). Stok tidak berubah saat barang
+diterima — restock adalah keputusan admin.
+
+**Refund.** Tabel `refunds` (PENDING/APPROVED/PROCESSING/SUCCEEDED/FAILED/CANCELLED).
+`PrepareRefund` membuat refund PENDING untuk payment PAID pesanan, dengan total refund
+tidak boleh melebihi yang dibayar. **Tidak ada panggilan API refund Midtrans**; uang tidak
+dikembalikan otomatis. `CompleteRefund` hanya mencatat refund yang dilakukan di luar
+sistem (mis. transfer manual) beserta referensinya.
 
 **Gambar.** Database menyimpan URL, bukan file. `media.Valid` hanya menerima URL https
 Cloudinary atau data URI kecil (data demo); `{{img url lebar}}` meminta Cloudinary

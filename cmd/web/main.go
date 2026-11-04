@@ -7,6 +7,8 @@
 //	ecommerce reconcile-payments [-limit N]
 //	                          sync pending payments with the provider, expire
 //	                          overdue unpaid orders, list payments to review
+//	ecommerce recalculate-ratings
+//	                          rebuild cached product ratings from product_reviews
 //	ecommerce version         print the build version
 package main
 
@@ -25,6 +27,7 @@ import (
 	"ecommerce/internal/database"
 	"ecommerce/internal/payment"
 	"ecommerce/internal/payment/midtrans"
+	"ecommerce/internal/review"
 	"ecommerce/internal/server"
 	"ecommerce/internal/view"
 	"ecommerce/web"
@@ -66,8 +69,10 @@ func run(args []string) error {
 		return migrate(ctx, cfg, log, args)
 	case "reconcile-payments":
 		return reconcilePayments(ctx, cfg, log, args)
+	case "recalculate-ratings":
+		return recalculateRatings(ctx, cfg)
 	default:
-		return fmt.Errorf("unknown command %q (want serve, migrate, reconcile-payments, version)", cmd)
+		return fmt.Errorf("unknown command %q (want serve, migrate, reconcile-payments, recalculate-ratings, version)", cmd)
 	}
 }
 
@@ -194,6 +199,22 @@ func reconcilePayments(ctx context.Context, cfg *config.Config, log *slog.Logger
 	if rep.Errors > 0 {
 		return fmt.Errorf("reconcile-payments: %d error(s), see log", rep.Errors)
 	}
+	return nil
+}
+
+// recalculateRatings repairs products whose cached rating differs from
+// product_reviews (reviews already keep it in sync; this is a repair tool).
+func recalculateRatings(ctx context.Context, cfg *config.Config) error {
+	db, err := database.Open(ctx, cfg.Database)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	n, err := review.NewService(review.NewRepository(db)).RecalculateAll(ctx)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("products repaired: %d\n", n)
 	return nil
 }
 

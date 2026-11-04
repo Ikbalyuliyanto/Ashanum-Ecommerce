@@ -40,7 +40,7 @@ func TestEnvExampleIsValid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, k := range []string{"APP_ENV", "APP_HOST", "APP_PORT", "APP_NAME", "APP_BASE_URL", "DATABASE_URL", "DB_MAX_CONNS", "DB_MIN_CONNS", "SESSION_SECRET", "MIDTRANS_ENV", "MIDTRANS_SERVER_KEY", "MIDTRANS_CLIENT_KEY"} {
+	for _, k := range []string{"APP_ENV", "APP_HOST", "APP_PORT", "APP_NAME", "APP_BASE_URL", "DATABASE_URL", "DB_MAX_CONNS", "DB_MIN_CONNS", "SESSION_SECRET", "MIDTRANS_ENV", "MIDTRANS_SERVER_KEY", "MIDTRANS_CLIENT_KEY", "RETURN_WINDOW_DAYS"} {
 		t.Setenv(k, "")
 		os.Unsetenv(k)
 	}
@@ -152,5 +152,25 @@ func TestPaymentConfigRules(t *testing.T) {
 	t.Setenv("APP_BASE_URL", "https://toko.example")
 	if _, err := Load(); err != nil {
 		t.Errorf("production sandbox with https base URL: %v", err)
+	}
+}
+
+func TestReturnWindowConfig(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("DATABASE_URL", "postgres://u:p@db:5432/shop")
+	t.Setenv("RETURN_WINDOW_DAYS", "")
+	if cfg, err := Load(); err != nil || cfg.Returns.WindowDays != 7 {
+		t.Errorf("default return window: %v %+v", err, cfg)
+	}
+	t.Setenv("RETURN_WINDOW_DAYS", "14")
+	if cfg, err := Load(); err != nil || cfg.Returns.WindowDays != 14 {
+		t.Errorf("configured return window: %v %+v", err, cfg)
+	}
+	for _, bad := range []string{"0", "-3", "400", "tujuh"} {
+		t.Setenv("RETURN_WINDOW_DAYS", bad)
+		if _, err := Load(); err == nil {
+			t.Errorf("RETURN_WINDOW_DAYS=%s must be refused", bad)
+		}
 	}
 }

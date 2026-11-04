@@ -11,7 +11,7 @@ import (
 )
 
 const getOrder = `-- name: GetOrder :one
-SELECT id, order_number, user_id, idempotency_key, status, subtotal, shipping_cost, discount, total, address_label, recipient_name, recipient_phone, province, city, district, village, postal_code, address, latitude, longitude, created_at, updated_at, payment_due_at, paid_at, cancelled_at, cancel_reason, stock_restored_at FROM orders WHERE order_number = $1 AND user_id = $2
+SELECT id, order_number, user_id, idempotency_key, status, subtotal, shipping_cost, discount, total, address_label, recipient_name, recipient_phone, province, city, district, village, postal_code, address, latitude, longitude, created_at, updated_at, payment_due_at, paid_at, cancelled_at, cancel_reason, stock_restored_at, completed_at FROM orders WHERE order_number = $1 AND user_id = $2
 `
 
 type GetOrderParams struct {
@@ -50,6 +50,7 @@ func (q *Queries) GetOrder(ctx context.Context, arg GetOrderParams) (Order, erro
 		&i.CancelledAt,
 		&i.CancelReason,
 		&i.StockRestoredAt,
+		&i.CompletedAt,
 	)
 	return i, err
 }

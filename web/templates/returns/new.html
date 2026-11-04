@@ -1,0 +1,111 @@
+{{template "base" .}}
+
+{{define "title"}}Ajukan Pengembalian · {{.App.Name}}{{end}}
+{{define "content"}}{{template "account-layout" .}}{{end}}
+{{define "account-back"}}/account/orders/{{.Data.Draft.OrderNumber}}{{end}}
+{{define "account-title"}}Ajukan Pengembalian{{end}}
+
+{{define "account-main"}}
+{{$p := .Data}}
+{{if $p.Errors}}<div class="alert alert--error" role="alert">Periksa kembali isian yang ditandai.</div>{{end}}
+<p class="rf-intro muted">Pesanan <strong>{{$p.Draft.OrderNumber}}</strong> · ajukan sebelum {{datetime $p.Draft.Deadline}} ({{$p.WindowDays}} hari setelah pesanan selesai).</p>
+
+<form class="return-form" method="post" action="/account/returns">
+  <input type="hidden" name="order" value="{{$p.Draft.OrderNumber}}">
+  <input type="hidden" name="key" value="{{$p.Key}}">
+
+  {{/* Changing items, quantities or type refreshes only the summary (HTMX);
+       the server recomputes everything again on submit. */}}
+  <div class="rf-live" hx-get="/account/returns/new" hx-trigger="change"
+       hx-include="[name='order'],[name='item'],[name^='qty_'],[name='type']"
+       hx-target="#return-summary" hx-swap="outerHTML">
+    <section class="card" aria-labelledby="rf-items">
+      <h2 class="card__title form-section-title" id="rf-items">1. Pilih Barang</h2>
+      {{with index $p.Errors "items"}}<p class="field__error" role="alert">{{.}}</p>{{end}}
+      <ul class="rf-items">
+        {{range $p.Draft.Items}}
+        <li class="rf-item">
+          <label class="rf-item__pick">
+            <input type="checkbox" name="item" value="{{.OrderItemID}}"{{if $p.Chosen .OrderItemID}} checked{{end}}>
+            <img src="{{img .ImageURL 72}}" alt="" width="56" height="56" loading="lazy">
+            <span class="rf-item__info">
+              <span class="rf-item__name">{{.ProductName}}</span>
+              {{with .VariantLabel}}<span class="rf-item__variant">Varian: {{.}}</span>{{end}}
+              <span class="rf-item__price">{{rupiah .UnitPrice}} · dibeli {{.Purchased}}{{if .Returned}}, sudah diajukan {{.Returned}}{{end}}</span>
+            </span>
+          </label>
+          <label class="rf-item__qty">
+            <span>Jumlah</span>
+            <select class="select" name="qty_{{.OrderItemID}}">
+              {{$id := .OrderItemID}}{{range .QuantityOptions}}<option value="{{.}}"{{if eq . ($p.Quantity $id)}} selected{{end}}>{{.}}</option>{{end}}
+            </select>
+          </label>
+        </li>
+        {{end}}
+      </ul>
+    </section>
+
+    <section class="card" aria-labelledby="rf-type">
+      <h2 class="card__title form-section-title" id="rf-type">2. Jenis Pengembalian</h2>
+      {{with index $p.Errors "type"}}<p class="field__error" role="alert">{{.}}</p>{{end}}
+      <div class="rf-types">
+        <label class="rf-type">
+          <input type="radio" name="type" value="REFUND"{{if eq $p.Type "REFUND"}} checked{{end}}>
+          <span><strong>Pengembalian Dana</strong><span class="muted">Barang dikembalikan, dana dikembalikan sesuai harga barang.</span></span>
+        </label>
+        <label class="rf-type">
+          <input type="radio" name="type" value="EXCHANGE"{{if eq $p.Type "EXCHANGE"}} checked{{end}}>
+          <span><strong>Tukar Barang</strong><span class="muted">Barang dikembalikan dan diganti dengan barang yang sama.</span></span>
+        </label>
+      </div>
+    </section>
+  </div>
+
+  <section class="card" aria-labelledby="rf-reason">
+    <h2 class="card__title form-section-title" id="rf-reason">3. Alasan</h2>
+    <div class="field">
+      <label class="field__label" for="reason">Alasan pengembalian</label>
+      <select class="select{{if index $p.Errors "reason"}} is-invalid{{end}}" id="reason" name="reason" required>
+        <option value="">Pilih alasan</option>
+        {{range $p.Reasons}}<option value="{{.}}"{{if eq . $p.Reason}} selected{{end}}>{{.Label}}</option>{{end}}
+      </select>
+      {{with index $p.Errors "reason"}}<p class="field__error" role="alert">{{.}}</p>{{end}}
+    </div>
+    <div class="field">
+      <label class="field__label" for="description">Deskripsi <span class="field__optional">(wajib jika memilih Lainnya)</span></label>
+      <textarea class="textarea{{if index $p.Errors "description"}} is-invalid{{end}}" id="description" name="description" rows="4" maxlength="1000"
+        placeholder="Ceritakan masalahnya, misalnya bagian yang rusak.">{{$p.Description}}</textarea>
+      {{with index $p.Errors "description"}}<p class="field__error" role="alert">{{.}}</p>{{end}}
+    </div>
+  </section>
+
+  <section class="card" aria-labelledby="rf-evidence">
+    <h2 class="card__title form-section-title" id="rf-evidence">4. Bukti <span class="field__optional">(opsional)</span></h2>
+    <div class="field">
+      <label class="field__label" for="evidence">Tautan foto atau video</label>
+      <textarea class="textarea{{if index $p.Errors "evidence"}} is-invalid{{end}}" id="evidence" name="evidence" rows="3"
+        placeholder="https://drive.google.com/…&#10;Satu tautan per baris">{{$p.Evidence}}</textarea>
+      {{with index $p.Errors "evidence"}}<p class="field__error" role="alert">{{.}}</p>{{else}}<p class="field__hint">Tautan https, satu per baris, maksimal 5. Unggah langsung belum tersedia.</p>{{end}}
+    </div>
+  </section>
+
+  {{template "return-summary" .}}
+
+  <button class="btn btn--primary btn--block" type="submit">Kirim Pengajuan</button>
+</form>
+{{end}}
+
+{{define "return-summary"}}
+{{$p := .Data}}
+<section class="card rf-summary" id="return-summary" aria-live="polite">
+  <dl class="co-summary">
+    <div><dt>Barang dipilih</dt><dd>{{$p.ChosenUnits}} barang</dd></div>
+    {{if eq $p.Type "EXCHANGE"}}
+    <div class="co-summary__total"><dt>Pengembalian dana</dt><dd>Tidak ada (tukar barang)</dd></div>
+    {{else}}
+    <div class="co-summary__total"><dt>Estimasi pengembalian dana</dt><dd>{{rupiah $p.Estimate}}</dd></div>
+    {{end}}
+  </dl>
+  <p class="co-note">Dihitung dari harga barang saat dibeli. Ongkos kirim dan biaya pengiriman retur belum termasuk; ketentuannya menyusul. Pengajuan akan ditinjau lebih dulu.</p>
+</section>
+{{end}}

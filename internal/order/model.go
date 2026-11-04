@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"ecommerce/internal/payment"
+	"ecommerce/internal/returns"
 )
 
 var ErrNotFound = errors.New("order: not found")
@@ -117,10 +118,35 @@ type Order struct {
 	PaidAt       *time.Time // payment confirmed by the provider
 	CancelledAt  *time.Time
 	CancelReason string // USER_CANCELLED | PAYMENT_EXPIRED
+	CompletedAt  *time.Time
 
 	Payments       []payment.Attempt // oldest first
 	PaymentEnabled bool              // online payment is configured
 	Sandbox        bool              // test payments only
+
+	// Completed orders only: reviewed items (order item → review) and returns.
+	Reviewed map[int64]int64
+	Returns  returns.OrderInfo
+}
+
+// ReviewID is the review of an order item, or 0.
+func (o Order) ReviewID(itemID int64) int64 { return o.Reviewed[itemID] }
+
+// CanReview reports whether an item of a completed order still has no review.
+func (o Order) CanReview() bool { return o.FirstUnreviewed() != 0 }
+
+// FirstUnreviewed is the first item without a review (0 when none or when
+// the order is not completed).
+func (o Order) FirstUnreviewed() int64 {
+	if o.Status != StatusCompleted {
+		return 0
+	}
+	for _, it := range o.Items {
+		if o.Reviewed[it.ID] == 0 {
+			return it.ID
+		}
+	}
+	return 0
 }
 
 // LastPayment is the latest payment attempt, or nil.

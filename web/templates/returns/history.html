@@ -1,0 +1,44 @@
+{{template "base" .}}
+
+{{define "title"}}Pengembalian · {{.App.Name}}{{end}}
+{{define "content"}}{{template "account-layout" .}}{{end}}
+{{define "account-title"}}Pengembalian{{end}}
+
+{{define "account-main"}}
+{{if .Data.Result.Returns}}
+<div class="order-list">{{template "return-cards" .}}</div>
+{{else}}
+<div class="empty-state">
+  {{icon "rotate"}}
+  <h2>Belum ada pengajuan pengembalian</h2>
+  <p class="muted">Pengembalian dana atau tukar barang bisa diajukan dari rincian pesanan yang sudah selesai.</p>
+  <a class="btn btn--primary" href="/account/orders?status=completed">Lihat Pesanan Selesai</a>
+</div>
+{{end}}
+{{end}}
+
+{{define "return-cards"}}
+{{range .Data.Result.Returns}}
+<article class="order-card">
+  <div class="order-card__head">
+    <span class="order-card__brand">{{.Type.Label}}</span>
+    <span class="order-status return-status return-status--{{.Status}}">{{.Status.Label}}</span>
+  </div>
+  <a class="order-card__item" href="/account/returns/{{.Number}}">
+    <img src="{{img .ImageURL 72}}" alt="" width="64" height="64" loading="lazy">
+    <span class="order-card__info">
+      <span class="order-card__name">{{.ProductName}}</span>
+      <span class="order-card__qty">{{.ItemCount}} barang · pesanan {{.OrderNumber}}</span>
+    </span>
+  </a>
+  <div class="order-card__foot">
+    <span class="muted">{{.Number}} · {{datetime .CreatedAt}}</span>
+    <span>{{if eq .Type "REFUND"}}Pengembalian Dana <strong>{{rupiah .RefundAmount}}</strong>{{else}}Tukar barang{{end}}</span>
+  </div>
+  <div class="order-card__actions"><a class="btn btn--outline" href="/account/returns/{{.Number}}">Lihat Detail</a></div>
+</article>
+{{end}}
+{{if .Data.Result.HasNext}}
+<a id="returns-more" class="load-more" href="{{.Data.NextURL}}" hx-get="{{.Data.NextURL}}" hx-target="this" hx-swap="outerHTML">Muat lebih banyak</a>
+{{end}}
+{{end}}

@@ -97,6 +97,7 @@ func (r *Renderer) funcs() template.FuncMap {
 		"rupiah":      FormatRupiah,
 		"sold":        FormatSold,
 		"datetime":    FormatDateTime,
+		"date":        FormatDate,
 		"img":         r.imageURL,
 		"add":         func(a, b int) int { return a + b },
 		"sub":         func(a, b int) int { return a - b },

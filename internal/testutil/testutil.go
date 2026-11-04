@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -76,4 +77,28 @@ func CreateUser(t *testing.T, pool *pgxpool.Pool, email string) int64 {
 		t.Fatalf("create user %s: %v", email, err)
 	}
 	return id
+}
+
+// CompleteOrder turns an order into a paid, COMPLETED order, as the admin
+// and shipping phases will (test fixture only; nothing in the app does this
+// yet): a PAID payment, paid_at and completed_at.
+func CompleteOrder(t *testing.T, pool *pgxpool.Pool, orderNumber string, completedAt time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO payments (order_id, attempt_no, provider, provider_order_id, amount, status, paid_at, expires_at)
+		SELECT o.id, coalesce((SELECT max(p.attempt_no) FROM payments p WHERE p.order_id = o.id), 0) + 1,
+		       'test', o.order_number || '-T', o.total, 'PAID', $2, $2
+		FROM orders o
+		WHERE o.order_number = $1
+		  AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.order_id = o.id AND p.status = 'PAID')`,
+		orderNumber, completedAt); err != nil {
+		t.Fatalf("complete order %s: payment: %v", orderNumber, err)
+	}
+	tag, err := pool.Exec(ctx,
+		"UPDATE orders SET status = 'COMPLETED', paid_at = coalesce(paid_at, $2), completed_at = $2 WHERE order_number = $1",
+		orderNumber, completedAt)
+	if err != nil || tag.RowsAffected() != 1 {
+		t.Fatalf("complete order %s: %v", orderNumber, err)
+	}
 }

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"ecommerce/internal/payment"
+	"ecommerce/internal/returns"
 )
 
 // Payments is the part of payment.Service the order pages use.
@@ -16,13 +17,32 @@ type Payments interface {
 	Sync(ctx context.Context, orderID int64) error
 }
 
-type Service struct {
-	repo     *Repository
-	payments Payments // nil: orders without payment information
+// Reviews is the part of review.Service the order detail uses.
+type Reviews interface {
+	ReviewedItems(ctx context.Context, userID, orderID int64) (map[int64]int64, error)
 }
 
-func NewService(repo *Repository, payments Payments) *Service {
-	return &Service{repo: repo, payments: payments}
+// Returns is the part of returns.Service the order detail uses.
+type Returns interface {
+	ForOrder(ctx context.Context, userID int64, number string) (returns.OrderInfo, error)
+}
+
+// Deps are optional collaborators; nil ones leave that information out.
+type Deps struct {
+	Payments Payments
+	Reviews  Reviews
+	Returns  Returns
+}
+
+type Service struct {
+	repo     *Repository
+	payments Payments
+	reviews  Reviews
+	returns  Returns
+}
+
+func NewService(repo *Repository, deps Deps) *Service {
+	return &Service{repo: repo, payments: deps.Payments, reviews: deps.Reviews, returns: deps.Returns}
 }
 
 // List returns one page (1-based) of the user's orders for a history tab.
@@ -60,11 +80,15 @@ func (s *Service) List(ctx context.Context, userID int64, tabKey string, page in
 	return p, nil
 }
 
-// Get returns an order of the user with its payment attempts; another
-// user's order is ErrNotFound. An overdue unpaid order is expired first.
+// Get returns an order of the user with its payment attempts, and for a
+// completed order its reviews and returns; another user's order is
+// ErrNotFound. An overdue unpaid order is expired first.
 func (s *Service) Get(ctx context.Context, userID int64, number string) (Order, error) {
 	o, err := s.get(ctx, userID, number)
-	if err != nil || s.payments == nil {
+	if err != nil {
+		return o, err
+	}
+	if o, err = s.withAfterSales(ctx, userID, o); err != nil || s.payments == nil {
 		return o, err
 	}
 	if o.Status == StatusWaitingPayment && !time.Now().Before(o.PaymentDueAt) {
@@ -104,6 +128,25 @@ func (s *Service) get(ctx context.Context, userID int64, number string) (Order, 
 		return Order{}, ErrNotFound
 	}
 	return s.repo.Get(ctx, userID, number)
+}
+
+// withAfterSales adds reviews and returns to a completed order.
+func (s *Service) withAfterSales(ctx context.Context, userID int64, o Order) (Order, error) {
+	if o.Status != StatusCompleted {
+		return o, nil
+	}
+	var err error
+	if s.reviews != nil {
+		if o.Reviewed, err = s.reviews.ReviewedItems(ctx, userID, o.ID); err != nil {
+			return Order{}, err
+		}
+	}
+	if s.returns != nil {
+		if o.Returns, err = s.returns.ForOrder(ctx, userID, o.Number); err != nil {
+			return Order{}, err
+		}
+	}
+	return o, nil
 }
 
 func (s *Service) withPayments(ctx context.Context, o Order) (Order, error) {

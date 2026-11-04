@@ -75,3 +75,9 @@ func FormatDateTime(t time.Time) string {
 	return strconv.Itoa(t.Day()) + " " + monthsID[t.Month()-1] + " " + strconv.Itoa(t.Year()) +
 		", " + t.Format("15:04") + " WIB"
 }
+
+// FormatDate renders "3 Nov 2026" (WIB).
+func FormatDate(t time.Time) string {
+	t = t.In(wib)
+	return strconv.Itoa(t.Day()) + " " + monthsID[t.Month()-1] + " " + strconv.Itoa(t.Year())
+}

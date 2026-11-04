@@ -1,0 +1,62 @@
+{{/* Star display for a whole-number rating: {{template "stars" 4}}. */}}
+{{define "stars" -}}
+<span class="stars" role="img" aria-label="{{.}} dari 5 bintang">
+  <span class="star{{if ge . 1}} is-on{{end}}" aria-hidden="true">★</span>
+  <span class="star{{if ge . 2}} is-on{{end}}" aria-hidden="true">★</span>
+  <span class="star{{if ge . 3}} is-on{{end}}" aria-hidden="true">★</span>
+  <span class="star{{if ge . 4}} is-on{{end}}" aria-hidden="true">★</span>
+  <span class="star{{if ge . 5}} is-on{{end}}" aria-hidden="true">★</span>
+</span>
+{{- end}}
+
+{{/* "Ulasan Pembeli" on the product page; data: review.ProductPage. */}}
+{{define "product-reviews"}}
+<section class="card reviews" id="ulasan" aria-labelledby="reviews-title">
+  <div class="reviews__head">
+    <h2 class="card__title" id="reviews-title">Ulasan Pembeli</h2>
+    {{if .Summary.Count}}<a class="section__more" href="/products/{{.ProductSlug}}/reviews">Lihat Semua ›</a>{{end}}
+  </div>
+  {{template "review-summary" .}}
+  {{if .Reviews}}<ul class="review-list">{{template "review-items" .}}</ul>{{end}}
+</section>
+{{end}}
+
+{{define "review-summary"}}
+{{if .Summary.Count}}
+<div class="rating-summary">
+  <div class="rating-summary__score">
+    <p class="rating-summary__value"><strong>{{printf "%.1f" .Summary.Average}}</strong><span class="muted"> / 5</span></p>
+    {{template "stars" .Summary.Stars}}
+    <p class="muted">{{.Summary.Count}} ulasan</p>
+  </div>
+  <ul class="rating-bars" aria-label="Sebaran rating">
+    {{range .Summary.Bars}}
+    <li><span class="rating-bars__label">{{.Stars}} ★</span><progress max="{{$.Summary.Count}}" value="{{.Count}}">{{.Count}}</progress><span class="rating-bars__count">{{.Count}}</span></li>
+    {{end}}
+  </ul>
+</div>
+{{else}}
+<p class="muted reviews__empty">Belum ada ulasan untuk produk ini.</p>
+{{end}}
+{{end}}
+
+{{/* Review items plus the next-page link; HTMX swaps the link with the next page. */}}
+{{define "review-items"}}
+{{range .Reviews}}
+<li class="review">
+  <div class="review__head">
+    <span class="review__author">{{.Author}}</span>
+    <span class="review__date">{{date .CreatedAt}}</span>
+  </div>
+  {{template "stars" .Rating}}
+  {{with .VariantLabel}}<p class="review__variant">Varian: {{.}}</p>{{end}}
+  {{with .Comment}}<p class="review__comment">{{.}}</p>{{end}}
+</li>
+{{end}}
+{{if .HasNext}}
+<li class="review-list__more" id="reviews-more">
+  <a class="load-more" href="/products/{{.ProductSlug}}/reviews?page={{add .Page 1}}"
+     hx-get="/products/{{.ProductSlug}}/reviews?page={{add .Page 1}}" hx-target="#reviews-more" hx-swap="outerHTML">Muat ulasan lainnya</a>
+</li>
+{{end}}
+{{end}}

@@ -23,6 +23,8 @@ import (
 	"ecommerce/internal/order"
 	"ecommerce/internal/payment"
 	"ecommerce/internal/product"
+	"ecommerce/internal/returns"
+	"ecommerce/internal/review"
 	"ecommerce/internal/user"
 	"ecommerce/internal/view"
 )
@@ -55,7 +57,9 @@ func NewRouter(d Deps) http.Handler {
 		Sandbox: d.Config.Midtrans.Env == config.MidtransSandbox,
 		Log:     d.Log,
 	})
-	orderSvc := order.NewService(order.NewRepository(d.DB), paymentSvc)
+	reviewSvc := review.NewService(review.NewRepository(d.DB))
+	returnSvc := returns.NewService(returns.NewRepository(d.DB), returns.Options{WindowDays: d.Config.Returns.WindowDays})
+	orderSvc := order.NewService(order.NewRepository(d.DB), order.Deps{Payments: paymentSvc, Reviews: reviewSvc, Returns: returnSvc})
 	checkoutSvc := checkout.NewService(checkout.NewRepository(d.DB), addressSvc)
 
 	// Header cart badge on full pages for signed-in users (one small query).
@@ -72,6 +76,7 @@ func NewRouter(d Deps) http.Handler {
 	})
 
 	paymentH := payment.NewHandler(paymentSvc, d.View, d.Log)
+	reviewH := review.NewHandler(reviewSvc, d.View)
 	authH := auth.NewHandler(authSvc, d.View, auth.NewCookieConfig(d.Config.IsProduction()), d.Log)
 
 	r := chi.NewRouter()
@@ -103,7 +108,8 @@ func NewRouter(d Deps) http.Handler {
 
 	home.NewHandler(productSvc, categorySvc, d.View).Routes(r)
 	category.NewHandler(categorySvc, d.View).Routes(r)
-	product.NewHandler(productSvc, categorySvc, d.View).Routes(r)
+	product.NewHandler(productSvc, categorySvc, reviewSvc, d.View).Routes(r)
+	reviewH.PublicRoutes(r)
 	authH.Routes(r)
 	paymentH.WebhookRoutes(r)
 
@@ -115,6 +121,8 @@ func NewRouter(d Deps) http.Handler {
 		checkout.NewHandler(checkoutSvc, cartSvc, orderSvc, d.View).Routes(r)
 		order.NewHandler(orderSvc, d.View).Routes(r)
 		paymentH.Routes(r)
+		reviewH.Routes(r)
+		returns.NewHandler(returnSvc, d.View).Routes(r)
 	})
 
 	return r

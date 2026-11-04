@@ -29,7 +29,7 @@
     {{with $p.Brand}}<p class="pdp__brand">{{.}}</p>{{end}}
     <h1 class="pdp__name">{{if $p.FlashSale}}<span class="badge-flash">{{icon "zap"}} Flash Sale</span> {{end}}{{$p.Name}}</h1>
     <p class="pdp__meta">
-      {{if $p.RatingCount}}<span class="pdp__rating">★ {{printf "%.1f" $p.RatingAverage}}</span> <span class="muted">({{$p.RatingCount}} penilaian)</span><span class="pdp__sep">|</span>{{end}}
+      {{if $p.RatingCount}}<a class="pdp__rating-link" href="#ulasan"><span class="pdp__rating">★ {{printf "%.1f" $p.RatingAverage}}</span> <span class="muted">({{$p.RatingCount}} ulasan)</span></a><span class="pdp__sep">|</span>{{end}}
       <span>{{sold $p.SoldCount}} terjual</span>
     </p>
     {{template "product-buy" .}}
@@ -40,6 +40,8 @@
   <h2 class="card__title" id="pdp-desc">Deskripsi Produk</h2>
   <div class="prose">{{if $p.Description}}{{$p.Description}}{{else}}Belum ada deskripsi.{{end}}</div>
 </section>
+
+{{with .Data.Reviews}}{{template "product-reviews" .}}{{end}}
 
 {{with .Data.Related}}
 <section class="section" aria-labelledby="pdp-related">

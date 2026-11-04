@@ -1,0 +1,97 @@
+{{template "base" .}}
+
+{{define "title"}}Pengembalian {{.Data.Number}} · {{.App.Name}}{{end}}
+{{define "content"}}{{template "account-layout" .}}{{end}}
+{{define "account-back"}}/account/returns{{end}}
+{{define "account-title"}}Rincian Pengembalian{{end}}
+
+{{define "account-main"}}
+{{$r := .Data}}
+<section class="order-banner return-banner return-banner--{{$r.Status}}">
+  <p class="order-banner__status">{{$r.Status.Label}}</p>
+  <p class="order-banner__text">{{$r.Type.Label}}{{if eq $r.Status "REQUESTED"}} · pengajuan sedang ditinjau{{end}}</p>
+</section>
+
+{{with $r.ResolutionNote}}<div class="alert alert--info">Catatan dari Ashanum: {{.}}</div>{{end}}
+
+<section class="card order-meta">
+  <div><span class="muted">No. Pengajuan</span><strong>{{$r.Number}}</strong></div>
+  <div><span class="muted">No. Pesanan</span><a href="/account/orders/{{$r.OrderNumber}}">{{$r.OrderNumber}}</a></div>
+  <div><span class="muted">Diajukan</span><span>{{datetime $r.RequestedAt}}</span></div>
+  <div><span class="muted">Jenis</span><span>{{$r.Type.Label}}</span></div>
+</section>
+
+<section class="card" aria-labelledby="rd-timeline">
+  <h2 class="card__title form-section-title" id="rd-timeline">Status</h2>
+  <ol class="timeline">
+    {{range $r.Events}}
+    <li class="timeline__step">
+      <p class="timeline__title">{{.To.Label}}</p>
+      <p class="muted timeline__meta">{{datetime .At}} · {{.ActorLabel}}</p>
+      {{with .Note}}<p class="timeline__note">{{.}}</p>{{end}}
+    </li>
+    {{end}}
+  </ol>
+</section>
+
+<section class="card" aria-labelledby="rd-items">
+  <h2 class="card__title form-section-title" id="rd-items">Barang</h2>
+  <ul class="co-lines">
+    {{range $r.Items}}
+    <li class="co-line">
+      <img class="co-line__img" src="{{img .ImageURL 72}}" alt="" width="64" height="64" loading="lazy">
+      <div class="co-line__body">
+        <p class="co-line__name">{{.ProductName}}</p>
+        {{with .VariantLabel}}<p class="co-line__variant">Varian: {{.}}</p>{{end}}
+        <p class="co-line__price">{{rupiah .UnitPrice}} <span class="muted">× {{.Quantity}}</span></p>
+      </div>
+      <p class="co-line__subtotal">{{rupiah .Subtotal}}</p>
+    </li>
+    {{end}}
+  </ul>
+</section>
+
+<section class="card" aria-labelledby="rd-reason">
+  <h2 class="card__title form-section-title" id="rd-reason">Alasan</h2>
+  <p class="rd-reason">{{$r.Reason.Label}}</p>
+  {{with $r.Description}}<p class="rd-description">{{.}}</p>{{end}}
+  {{if $r.Evidence}}
+  <h3 class="rd-subtitle">Bukti</h3>
+  <ul class="evidence-list">
+    {{range $i, $e := $r.Evidence}}
+    <li>
+      {{if $e.ShowInline}}<img src="{{img $e.URL 160}}" alt="Bukti {{add $i 1}}" width="80" height="80" loading="lazy">{{end}}
+      <a href="{{$e.URL}}" target="_blank" rel="noopener noreferrer nofollow">{{icon "external"}} Bukti {{add $i 1}}{{if eq $e.Kind "VIDEO"}} (video){{else if eq $e.Kind "IMAGE"}} (foto){{end}}</a>
+    </li>
+    {{end}}
+  </ul>
+  {{end}}
+</section>
+
+<section class="card" aria-labelledby="rd-refund">
+  <h2 class="card__title form-section-title" id="rd-refund">Pengembalian Dana</h2>
+  <dl class="co-summary">
+    <div><dt>Nilai barang</dt><dd>{{rupiah $r.ItemsValue}}</dd></div>
+    {{if eq $r.Type "REFUND"}}
+    <div><dt>Status dana</dt><dd>{{with $r.Refund}}{{.Status.Label}}{{else}}{{if or (eq $r.Status "REJECTED") (eq $r.Status "CANCELLED")}}Tidak diproses{{else}}Menunggu barang diterima{{end}}{{end}}</dd></div>
+    <div class="co-summary__total"><dt>Jumlah pengembalian</dt><dd>{{rupiah $r.RefundAmount}}</dd></div>
+    {{else}}
+    <div class="co-summary__total"><dt>Pengembalian dana</dt><dd>Tidak ada (tukar barang)</dd></div>
+    {{end}}
+  </dl>
+  <p class="co-note">Dihitung dari harga barang saat dibeli; ongkos kirim belum termasuk. Dana dikembalikan setelah barang diterima dan diperiksa.</p>
+</section>
+
+{{if $r.CanCancel}}
+<details class="sheet rd-cancel">
+  <summary class="btn btn--outline btn--block">Batalkan Pengajuan</summary>
+  <div class="sheet__panel" role="dialog" aria-label="Batalkan pengajuan">
+    <p class="sheet__title">Batalkan pengajuan ini?</p>
+    <p class="muted">Pengajuan {{$r.Number}} dibatalkan. Selama masih dalam batas waktu, Anda bisa mengajukan lagi.</p>
+    <form method="post" action="/account/returns/{{$r.Number}}/cancel">
+      <button class="btn btn--danger btn--block" type="submit">Ya, Batalkan Pengajuan</button>
+    </form>
+  </div>
+</details>
+{{end}}
+{{end}}

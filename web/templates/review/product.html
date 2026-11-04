@@ -1,0 +1,27 @@
+{{template "base" .}}
+
+{{define "title"}}Ulasan {{.Data.ProductName}} · {{.App.Name}}{{end}}
+
+{{define "content"}}
+{{$d := .Data}}
+<nav class="breadcrumb" aria-label="Breadcrumb">
+  <a href="/">Beranda</a> <span aria-hidden="true">›</span>
+  <a href="/products/{{$d.ProductSlug}}">{{$d.ProductName}}</a> <span aria-hidden="true">›</span>
+  <span>Ulasan</span>
+</nav>
+<section class="card reviews reviews--page" aria-labelledby="reviews-title">
+  <div class="reviews__head">
+    <h1 class="card__title" id="reviews-title">Ulasan Pembeli</h1>
+    <a class="section__more" href="/products/{{$d.ProductSlug}}">Lihat Produk ›</a>
+  </div>
+  {{template "review-summary" $d}}
+  {{if $d.Reviews}}
+  <ul class="review-list">{{template "review-items" $d}}</ul>
+  {{else if gt $d.Page 1}}
+  <p class="muted reviews__empty">Tidak ada ulasan lagi.</p>
+  {{end}}
+</section>
+{{end}}
+
+{{/* HTMX "Muat ulasan lainnya": the next items and link only. */}}
+{{define "review-items-fragment"}}{{template "review-items" .Data}}{{end}}

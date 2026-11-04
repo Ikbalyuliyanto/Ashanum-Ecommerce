@@ -35,7 +35,7 @@ func newFixture(t *testing.T) *fixture {
 	f := &fixture{t: t, ctx: context.Background(), db: db, addrs: addrs,
 		svc:    NewService(NewRepository(db), addrs),
 		carts:  cart.NewService(cart.NewRepository(db)),
-		orders: order.NewService(order.NewRepository(db), nil)}
+		orders: order.NewService(order.NewRepository(db), order.Deps{})}
 	c, err := category.NewService(category.NewRepository(db)).Create(f.ctx, category.Input{Name: "Atasan", Active: true})
 	if err != nil {
 		t.Fatal(err)
@@ -237,7 +237,7 @@ func TestSnapshotsSurviveLaterChanges(t *testing.T) {
 	f.exec("UPDATE user_addresses SET recipient_name = 'Orang Lain', street_address = 'Jl. Baru No. 1'")
 	// A variant held by an unpaid order cannot be deleted (migration 0007);
 	// once the order is completed the catalog row may go.
-	f.exec("UPDATE orders SET status = 'COMPLETED'")
+	f.exec("UPDATE orders SET status = 'COMPLETED', completed_at = now()")
 	f.exec("DELETE FROM products")
 
 	o, err := f.orders.Get(f.ctx, uid, placed.OrderNumber)

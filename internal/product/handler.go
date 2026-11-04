@@ -1,6 +1,7 @@
 package product
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/url"
@@ -10,19 +11,26 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"ecommerce/internal/category"
+	"ecommerce/internal/review"
 	"ecommerce/internal/view"
 )
 
 const relatedLimit = 6
 
+// Reviews is the part of review.Service the product page uses.
+type Reviews interface {
+	ProductPage(ctx context.Context, productID int64, average float64, count int, page int) (review.ProductPage, error)
+}
+
 type Handler struct {
 	svc        *Service
 	categories *category.Service
+	reviews    Reviews // nil: no review section
 	view       *view.Renderer
 }
 
-func NewHandler(svc *Service, categories *category.Service, v *view.Renderer) *Handler {
-	return &Handler{svc: svc, categories: categories, view: v}
+func NewHandler(svc *Service, categories *category.Service, reviews Reviews, v *view.Renderer) *Handler {
+	return &Handler{svc: svc, categories: categories, reviews: reviews, view: v}
 }
 
 // maxCartQuantity mirrors cart.MaxQuantity (the per-line limit); the cart
@@ -33,6 +41,7 @@ type detailPage struct {
 	Product   Detail
 	Selection Selection
 	Related   []Card
+	Reviews   *review.ProductPage // first page of "Ulasan Pembeli"
 	// Quantity is the picker value (?q=), within 1..MaxQuantity.
 	Quantity    int
 	MaxQuantity int
@@ -117,6 +126,15 @@ func (h *Handler) Detail(w http.ResponseWriter, r *http.Request) {
 	if page.Related, err = h.svc.Related(r.Context(), d, relatedLimit); err != nil {
 		h.view.ServerError(w, r, err)
 		return
+	}
+	if h.reviews != nil {
+		rp, err := h.reviews.ProductPage(r.Context(), d.ID, d.RatingAverage, d.RatingCount, 1)
+		if err != nil {
+			h.view.ServerError(w, r, err)
+			return
+		}
+		rp.ProductName, rp.ProductSlug = d.Name, d.Slug
+		page.Reviews = &rp
 	}
 	h.view.Render(w, r, http.StatusOK, "product/detail", page)
 }

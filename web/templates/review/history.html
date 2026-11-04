@@ -1,0 +1,68 @@
+{{template "base" .}}
+
+{{define "title"}}Ulasan Saya · {{.App.Name}}{{end}}
+{{define "content"}}{{template "account-layout" .}}{{end}}
+{{define "account-title"}}Ulasan Saya{{end}}
+
+{{define "account-main"}}
+{{$r := .Data.Result}}
+<nav class="order-tabs" aria-label="Ulasan">
+  <a class="order-tab{{if not $r.Tab}} is-active{{end}}" href="{{.Data.TabURL ""}}"{{if not $r.Tab}} aria-current="page"{{end}}>Ulasan Saya</a>
+  <a class="order-tab{{if $r.Tab}} is-active{{end}}" href="{{.Data.TabURL "pending"}}"{{if $r.Tab}} aria-current="page"{{end}}>Belum Diulas{{if $r.PendingCount}} ({{$r.PendingCount}}){{end}}</a>
+</nav>
+{{if or $r.Reviews $r.Pending}}
+<div class="order-list">{{template "review-cards" .}}</div>
+{{else}}
+<div class="empty-state">
+  {{icon "star"}}
+  {{if $r.Tab}}
+  <h2>Tidak ada produk yang menunggu ulasan</h2>
+  <p class="muted">Produk dari pesanan yang sudah selesai akan tampil di sini.</p>
+  {{else}}
+  <h2>Belum ada ulasan</h2>
+  <p class="muted">Ulasan bisa diberikan setelah pesanan selesai.</p>
+  {{end}}
+  <a class="btn btn--primary" href="/account/orders">Lihat Pesanan</a>
+</div>
+{{end}}
+{{end}}
+
+{{define "review-cards"}}
+{{range .Data.Result.Reviews}}
+<article class="review-card">
+  <div class="review-target">
+    <img src="{{img .ImageURL 72}}" alt="" width="64" height="64" loading="lazy">
+    <div>
+      <p class="review-target__name">{{if .ProductListed}}<a href="/products/{{.ProductSlug}}">{{.ProductName}}</a>{{else}}{{.ProductName}}{{end}}</p>
+      {{with .VariantLabel}}<p class="review-target__variant">Varian: {{.}}</p>{{end}}
+      <p class="muted review-target__order">{{.OrderNumber}}</p>
+    </div>
+  </div>
+  {{template "stars" .Rating}}
+  {{with .Comment}}<p class="review__comment">{{.}}</p>{{else}}<p class="muted review__comment">Tanpa komentar.</p>{{end}}
+  <div class="review-card__foot">
+    <span class="muted">{{date .CreatedAt}}{{if .Edited}} · diubah {{date .UpdatedAt}}{{end}}</span>
+    <a class="btn btn--outline" href="/account/reviews/{{.ID}}/edit">Edit</a>
+  </div>
+</article>
+{{end}}
+{{range .Data.Result.Pending}}
+<article class="review-card">
+  <div class="review-target">
+    <img src="{{img .ImageURL 72}}" alt="" width="64" height="64" loading="lazy">
+    <div>
+      <p class="review-target__name">{{.ProductName}}</p>
+      {{with .VariantLabel}}<p class="review-target__variant">Varian: {{.}}</p>{{end}}
+      <p class="muted review-target__order">{{.OrderNumber}}{{with .CompletedAt}} · selesai {{date .}}{{end}}</p>
+    </div>
+  </div>
+  <div class="review-card__foot">
+    <span class="muted">Bagikan pengalaman Anda</span>
+    <a class="btn btn--primary" href="/account/reviews/new?item={{.OrderItemID}}&amp;return_to=%2Faccount%2Freviews%3Ftab%3Dpending">Beri Ulasan</a>
+  </div>
+</article>
+{{end}}
+{{if .Data.Result.HasNext}}
+<a id="reviews-more" class="load-more" href="{{.Data.NextURL}}" hx-get="{{.Data.NextURL}}" hx-target="this" hx-swap="outerHTML">Muat lebih banyak</a>
+{{end}}
+{{end}}

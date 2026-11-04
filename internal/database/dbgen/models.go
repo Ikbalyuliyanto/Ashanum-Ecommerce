@@ -64,6 +64,7 @@ type Order struct {
 	CancelledAt     *time.Time
 	CancelReason    *string
 	StockRestoredAt *time.Time
+	CompletedAt     *time.Time
 }
 
 type OrderItem struct {
@@ -161,6 +162,18 @@ type ProductImage struct {
 	CreatedAt    time.Time
 }
 
+type ProductReview struct {
+	ID          int64
+	UserID      int64
+	OrderID     int64
+	OrderItemID int64
+	ProductID   *int64
+	Rating      int16
+	Comment     string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
 type ProductVariant struct {
 	ID            int64
 	ProductID     int64
@@ -178,6 +191,69 @@ type ProductVariantValue struct {
 	VariantID   int64
 	AttributeID int64
 	ValueID     int64
+}
+
+type Refund struct {
+	ID               int64
+	ReturnID         int64
+	PaymentID        *int64
+	Amount           int64
+	Status           string
+	Provider         *string
+	ProviderRefundID *string
+	RequestedAt      time.Time
+	ProcessedAt      *time.Time
+	FailureReason    *string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+type Return struct {
+	ID             int64
+	ReturnNumber   string
+	OrderID        int64
+	UserID         int64
+	Type           string
+	Status         string
+	Reason         string
+	Description    string
+	RefundAmount   int64
+	ResolutionNote string
+	IdempotencyKey *string
+	RequestedAt    time.Time
+	ApprovedAt     *time.Time
+	RejectedAt     *time.Time
+	CompletedAt    *time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+type ReturnEvent struct {
+	ID         int64
+	ReturnID   int64
+	FromStatus *string
+	ToStatus   string
+	Actor      string
+	Note       string
+	CreatedAt  time.Time
+}
+
+type ReturnEvidence struct {
+	ID        int64
+	ReturnID  int64
+	Url       string
+	MediaType string
+	Position  int16
+	CreatedAt time.Time
+}
+
+type ReturnItem struct {
+	ID          int64
+	ReturnID    int64
+	OrderItemID int64
+	Quantity    int32
+	UnitPrice   int64
+	Reason      *string
 }
 
 type Session struct {

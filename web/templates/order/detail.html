@@ -15,6 +15,8 @@
   <p class="order-banner__text">Pembayaran diterima. Pesanan menunggu konfirmasi penjual.</p>
   {{else if eq $o.Status "CANCELLED"}}
   <p class="order-banner__text">{{$o.CancelReasonText}}</p>
+  {{else if eq $o.Status "COMPLETED"}}
+  <p class="order-banner__text">Pesanan selesai. {{if $o.Returns.Eligible}}Pengembalian bisa diajukan sampai <strong>{{datetime $o.Returns.Deadline}}</strong>.{{else}}Terima kasih telah berbelanja.{{end}}</p>
   {{end}}
 </section>
 
@@ -28,6 +30,7 @@
   {{if eq $o.Status "WAITING_PAYMENT"}}<div><span class="muted">Batas Pembayaran</span><span>{{datetime $o.PaymentDueAt}}</span></div>{{end}}
   {{with $o.PaidAt}}<div><span class="muted">Waktu Pembayaran</span><span>{{datetime .}}</span></div>{{end}}
   {{with $o.CancelledAt}}<div><span class="muted">Waktu Pembatalan</span><span>{{datetime .}}</span></div>{{end}}
+  {{with $o.CompletedAt}}<div><span class="muted">Waktu Selesai</span><span>{{datetime .}}</span></div>{{end}}
 </section>
 
 <section class="card pay-card" aria-labelledby="od-payment">
@@ -86,10 +89,25 @@
         <p class="co-line__price">{{rupiah .UnitPrice}} <span class="muted">× {{.Quantity}}</span></p>
       </div>
       <p class="co-line__subtotal">{{rupiah .Subtotal}}</p>
+      {{if eq $o.Status "COMPLETED"}}
+      <div class="co-line__actions">
+        {{with $o.ReviewID .ID}}<a class="btn btn--outline btn--sm" href="/account/reviews/{{.}}/edit?return_to=%2Faccount%2Forders%2F{{$o.Number}}">Ubah Ulasan</a>
+        {{else}}<a class="btn btn--primary btn--sm" href="/account/reviews/new?item={{.ID}}&amp;return_to=%2Faccount%2Forders%2F{{$o.Number}}">Beri Ulasan</a>{{end}}
+      </div>
+      {{end}}
     </li>
     {{end}}
   </ul>
 </section>
+
+{{with $o.Returns.Returns}}
+<section class="card" aria-labelledby="od-returns">
+  <h2 class="card__title form-section-title" id="od-returns">{{icon "rotate"}} Pengembalian</h2>
+  <ul class="od-returns">
+    {{range .}}<li><a href="/account/returns/{{.Number}}"><span>{{.Number}} · {{.Type.Label}}</span><span class="return-status return-status--{{.Status}}">{{.Status.Label}}</span></a></li>{{end}}
+  </ul>
+</section>
+{{end}}
 
 <section class="card" aria-labelledby="od-summary">
   <h2 class="card__title form-section-title" id="od-summary">Rincian Pembayaran</h2>
@@ -113,5 +131,12 @@
   {{end}}
 </div>
 {{if not $o.PaymentEnabled}}<p class="co-note">Pembayaran online belum tersedia.</p>{{end}}
+{{end}}
+
+{{if or $o.CanReview $o.Returns.Eligible}}
+<div class="co-bar od-bar od-bar--after">
+  {{if $o.Returns.Eligible}}<a class="btn btn--outline" href="/account/returns/new?order={{$o.Number}}">Ajukan Pengembalian</a>{{end}}
+  {{if $o.CanReview}}<a class="btn btn--primary" href="/account/reviews/new?item={{$o.FirstUnreviewed}}&amp;return_to=%2Faccount%2Forders%2F{{$o.Number}}">Beri Ulasan</a>{{end}}
+</div>
 {{end}}
 {{end}}
