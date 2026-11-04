@@ -4,7 +4,13 @@
 // once the order is COMPLETED. product_reviews is the source of truth for
 // ratings; products.rating_average / rating_count are a cache rebuilt in
 // the same transaction as every review change (RecalculateProductRating).
-// The Service has no HTTP dependency, so a future API can reuse it.
+//
+// Moderation: an admin may hide a review (a reason is required) and show it
+// again. A hidden review is kept — the buyer still sees and may edit it —
+// but it is not public and does not count in the product rating; hiding and
+// showing recalculate the rating in the same transaction. Reviews are never
+// hard-deleted. The Service has no HTTP dependency, so a future API can
+// reuse it.
 package review
 
 import (
@@ -19,6 +25,7 @@ var (
 	ErrNotFound        = errors.New("review: not found")
 	ErrNotEligible     = errors.New("review: order item cannot be reviewed")
 	ErrAlreadyReviewed = errors.New("review: order item already reviewed")
+	ErrModerated       = errors.New("review: moderation status already changed")
 )
 
 // Message is the customer-facing text for a known error, or "".
@@ -62,7 +69,8 @@ type Review struct {
 	Rating        int
 	Comment       string
 	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	EditedAt      *time.Time // the buyer's last change
+	Hidden        bool       // hidden by moderation: not public
 	ProductName   string
 	ProductSlug   string
 	VariantLabel  string
@@ -71,8 +79,8 @@ type Review struct {
 	ProductListed bool // the product is still in the catalog
 }
 
-// Edited reports whether the review was changed after it was written.
-func (r Review) Edited() bool { return r.UpdatedAt.Sub(r.CreatedAt) > time.Second }
+// Edited reports whether the buyer changed the review after writing it.
+func (r Review) Edited() bool { return r.EditedAt != nil }
 
 // Target returns the review's item, e.g. for the edit form.
 func (r Review) Target() Target {
@@ -135,6 +143,46 @@ type ProductPage struct {
 	Reviews     []PublicReview
 	Page        int
 	HasNext     bool
+}
+
+// AdminReview is a review in the moderation list. The buyer is shown only
+// masked, with the order number as identifier.
+type AdminReview struct {
+	ID           int64
+	ProductID    int64 // 0 once the product was deleted
+	ProductName  string
+	VariantLabel string
+	OrderNumber  string
+	Author       string // masked name
+	Rating       int
+	Comment      string
+	CreatedAt    time.Time
+	EditedAt     *time.Time
+	HiddenAt     *time.Time
+	Reason       string // moderation reason while hidden
+}
+
+func (r AdminReview) Hidden() bool { return r.HiddenAt != nil }
+
+const (
+	AdminPageSize    = 20
+	MaxAdminPageSize = 100
+)
+
+// AdminFilter selects the moderation list: Status "" | "visible" | "hidden",
+// Rating 0 (all) or 1–5, Query on the product name.
+type AdminFilter struct {
+	Status   string
+	Rating   int
+	Query    string
+	Page     int
+	PageSize int
+}
+
+type AdminPage struct {
+	Reviews []AdminReview
+	Filter  AdminFilter
+	HasNext bool
 }
 
 // MaskName hides a reviewer's identity: every word keeps its first letter

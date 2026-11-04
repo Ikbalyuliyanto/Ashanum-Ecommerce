@@ -1,0 +1,45 @@
+{{/* Product fields shared by the admin new/edit forms.
+     Usage: {{template "adm-product-info" (dict "Info" X "Categories" Y "Errors" E "Images" S)}}
+     X has CategoryID Name Slug Brand Description Active Featured FlashSale. */}}
+{{define "adm-product-info" -}}
+{{$i := .Info}}{{$e := .Errors}}
+{{template "field" (dict "ID" "name" "Name" "name" "Label" "Nama produk" "Value" $i.Name "Required" true "Max" 120 "Error" (index $e "name"))}}
+<div class="field-row">
+  <div class="field">
+    <label class="field__label" for="category_id">Kategori</label>
+    <select class="select{{if index $e "category_id"}} is-invalid{{end}}" id="category_id" name="category_id" required>
+      <option value="">Pilih kategori</option>
+      {{range .Categories}}<option value="{{.ID}}"{{if eq .ID $i.CategoryID}} selected{{end}}>{{.Name}}{{if not .Active}} (nonaktif){{end}}</option>{{end}}
+    </select>
+    {{with index $e "category_id"}}<p class="field__error">{{.}}</p>{{end}}
+  </div>
+  {{template "field" (dict "ID" "brand" "Name" "brand" "Label" "Merek" "Value" $i.Brand "Optional" true "Max" 60 "Error" (index $e "brand"))}}
+</div>
+{{template "field" (dict "ID" "slug" "Name" "slug" "Label" "Slug (alamat halaman)" "Value" $i.Slug "Optional" true "Max" 120 "Hint" "Kosongkan untuk dibuat dari nama, mis. kaos-ashanum-basic" "Error" (index $e "slug"))}}
+<div class="field">
+  <label class="field__label" for="description">Deskripsi <span class="field__optional">(opsional)</span></label>
+  <textarea class="textarea{{if index $e "description"}} is-invalid{{end}}" id="description" name="description" maxlength="5000" rows="6">{{$i.Description}}</textarea>
+  {{with index $e "description"}}<p class="field__error">{{.}}</p>{{end}}
+</div>
+<div class="field">
+  <label class="field__label" for="images">URL gambar <span class="field__optional">(satu per baris, maks. 8)</span></label>
+  <textarea class="textarea{{if index $e "images"}} is-invalid{{end}}" id="images" name="images" rows="3" placeholder="https://res.cloudinary.com/…">{{.Images}}</textarea>
+  <p class="field__hint">Hanya URL https Cloudinary (satu-satunya host gambar yang diizinkan CSP). Gambar tidak disimpan di server.</p>
+  {{range $k, $v := $e}}{{if hasPrefix $k "images["}}<p class="field__error">{{$v}}</p>{{end}}{{end}}
+</div>
+<div class="adm-checks">
+  <label class="check"><input type="checkbox" name="active" value="1"{{if $i.Active}} checked{{end}}> Tampilkan di toko (aktif)</label>
+  <label class="check"><input type="checkbox" name="featured" value="1"{{if $i.Featured}} checked{{end}}> Produk unggulan</label>
+  <label class="check"><input type="checkbox" name="flash_sale" value="1"{{if $i.FlashSale}} checked{{end}}> Flash sale</label>
+</div>
+{{- end}}
+
+{{/* Category fields of the admin category forms: (dict "Form" category.Input "Errors" E). */}}
+{{define "adm-category-fields" -}}
+{{$f := .Form}}{{$e := .Errors}}
+{{template "field" (dict "ID" "cat-name" "Name" "name" "Label" "Nama kategori" "Value" $f.Name "Required" true "Max" 50 "Error" (index $e "name"))}}
+{{template "field" (dict "ID" "cat-slug" "Name" "slug" "Label" "Slug" "Value" $f.Slug "Optional" true "Max" 120 "Hint" "Kosongkan untuk dibuat dari nama" "Error" (index $e "slug"))}}
+{{template "field" (dict "ID" "cat-image" "Name" "image_url" "Label" "URL gambar/ikon" "Value" $f.ImageURL "Optional" true "Type" "url" "Hint" "URL https Cloudinary" "Error" (index $e "image_url"))}}
+{{template "field" (dict "ID" "cat-order" "Name" "display_order" "Label" "Urutan tampil" "Value" (print $f.DisplayOrder) "Mode" "numeric" "Error" (index $e "display_order"))}}
+<label class="check"><input type="checkbox" name="active" value="1"{{if $f.Active}} checked{{end}}> Aktif (tampil di toko)</label>
+{{- end}}

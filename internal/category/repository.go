@@ -11,10 +11,11 @@ import (
 var errSlugTaken = errors.New("category: slug taken")
 
 type Repository struct {
-	q *dbgen.Queries
+	db dbgen.DBTX
+	q  *dbgen.Queries
 }
 
-func NewRepository(db dbgen.DBTX) *Repository { return &Repository{q: dbgen.New(db)} }
+func NewRepository(db dbgen.DBTX) *Repository { return &Repository{db: db, q: dbgen.New(db)} }
 
 func (r *Repository) ListActive(ctx context.Context) ([]Category, error) {
 	rows, err := r.q.ListActiveCategories(ctx)

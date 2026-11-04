@@ -1,0 +1,45 @@
+{{define "adm-title"}}Tambah Produk{{end}}
+{{template "admin" .}}
+{{define "admin-content"}}
+{{$f := .Data.Form}}{{$e := .Data.Errors}}
+<section class="adm-section">
+  <a class="adm-back" href="/admin/products">{{icon "chevron-left"}} Produk</a>
+  <div class="adm-head"><h1>Tambah Produk</h1></div>
+  {{if $e}}<p class="alert alert--error" role="alert">Periksa kembali isian yang ditandai.{{with index $e "variants"}} {{.}}{{end}}{{with index $e "attributes"}} {{.}}{{end}}</p>{{end}}
+  <form class="adm-form" action="/admin/products" method="post">
+    <div class="card adm-card">
+      <h2 class="adm-h2">Informasi produk</h2>
+      {{template "adm-product-info" (dict "Info" $f "Categories" .Data.Categories "Errors" $e "Images" $f.Images)}}
+    </div>
+
+    <div class="card adm-card">
+      <h2 class="adm-h2">Varian</h2>
+      <p class="muted">Atribut bebas (mis. Warna, Ukuran, Bahan, Aroma). Isi nilai dipisah koma. Satu varian dibuat untuk tiap kombinasi; kosongkan semua atribut untuk produk tanpa pilihan.</p>
+      {{range $i, $n := $f.AttrNames}}{{$k := add $i 1}}
+      <div class="field-row adm-attr-row">
+        <div class="field">
+          <label class="field__label" for="attr_name_{{$k}}">Atribut {{$k}}</label>
+          <input class="input" id="attr_name_{{$k}}" name="attr_name_{{$k}}" value="{{$n}}" maxlength="30" placeholder="{{if eq $k 1}}mis. Warna{{else if eq $k 2}}mis. Ukuran{{else}}opsional{{end}}">
+          {{with index $e (print "attributes[" $i "].name")}}<p class="field__error">{{.}}</p>{{end}}
+        </div>
+        <div class="field">
+          <label class="field__label" for="attr_values_{{$k}}">Nilai (pisahkan dengan koma)</label>
+          <input class="input" id="attr_values_{{$k}}" name="attr_values_{{$k}}" value="{{index $f.AttrValues $i}}" maxlength="600" placeholder="{{if eq $k 1}}Hitam, Putih{{else if eq $k 2}}S, M, L{{end}}">
+          {{with index $e (print "attributes[" $i "].values")}}<p class="field__error">{{.}}</p>{{end}}
+        </div>
+      </div>
+      {{end}}
+      <div class="field-row">
+        {{template "field" (dict "ID" "sku_prefix" "Name" "sku_prefix" "Label" "Kode SKU" "Value" $f.SKUPrefix "Required" true "Max" 40 "Hint" "SKU varian = kode + nilai, mis. KAOS-BASIC-HITAM-M" "Error" (index $e "sku_prefix"))}}
+        {{template "field" (dict "ID" "price" "Name" "price" "Label" "Harga jual (Rp)" "Value" $f.Price "Mode" "numeric" "Required" true "Error" (index $e "variants[0].price"))}}
+      </div>
+      <div class="field-row">
+        {{template "field" (dict "ID" "original_price" "Name" "original_price" "Label" "Harga coret (Rp)" "Value" $f.OriginalPrice "Mode" "numeric" "Optional" true "Error" (index $e "variants[0].original_price"))}}
+        {{template "field" (dict "ID" "stock" "Name" "stock" "Label" "Stok awal per varian" "Value" $f.Stock "Mode" "numeric" "Required" true "Error" (index $e "variants[0].stock"))}}
+      </div>
+      {{with index $e "variants[0].sku"}}<p class="field__error">{{.}}</p>{{end}}
+    </div>
+    <div class="form-actions"><button class="btn btn--primary" type="submit">Simpan Produk</button></div>
+  </form>
+</section>
+{{end}}

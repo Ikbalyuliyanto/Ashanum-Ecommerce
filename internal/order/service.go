@@ -17,32 +17,28 @@ type Payments interface {
 	Sync(ctx context.Context, orderID int64) error
 }
 
-// Reviews is the part of review.Service the order detail uses.
-type Reviews interface {
-	ReviewedItems(ctx context.Context, userID, orderID int64) (map[int64]int64, error)
-}
-
-// Returns is the part of returns.Service the order detail uses.
+// Returns is the part of returns.Service the order detail uses: it decides
+// return eligibility from facts this package already loaded and lists the
+// order's returns (one query).
 type Returns interface {
-	ForOrder(ctx context.Context, userID int64, number string) (returns.OrderInfo, error)
+	Info(ctx context.Context, userID int64, f returns.OrderFacts) (returns.OrderInfo, error)
 }
 
 // Deps are optional collaborators; nil ones leave that information out.
+// Reviews need none: each line's review comes with the order items.
 type Deps struct {
 	Payments Payments
-	Reviews  Reviews
 	Returns  Returns
 }
 
 type Service struct {
 	repo     *Repository
 	payments Payments
-	reviews  Reviews
 	returns  Returns
 }
 
 func NewService(repo *Repository, deps Deps) *Service {
-	return &Service{repo: repo, payments: deps.Payments, reviews: deps.Reviews, returns: deps.Returns}
+	return &Service{repo: repo, payments: deps.Payments, returns: deps.Returns}
 }
 
 // List returns one page (1-based) of the user's orders for a history tab.
@@ -130,21 +126,17 @@ func (s *Service) get(ctx context.Context, userID int64, number string) (Order, 
 	return s.repo.Get(ctx, userID, number)
 }
 
-// withAfterSales adds reviews and returns to a completed order.
+// withAfterSales adds returns to a completed order (reviews already came
+// with the items).
 func (s *Service) withAfterSales(ctx context.Context, userID int64, o Order) (Order, error) {
-	if o.Status != StatusCompleted {
+	if o.Status != StatusCompleted || s.returns == nil {
 		return o, nil
 	}
 	var err error
-	if s.reviews != nil {
-		if o.Reviewed, err = s.reviews.ReviewedItems(ctx, userID, o.ID); err != nil {
-			return Order{}, err
-		}
-	}
-	if s.returns != nil {
-		if o.Returns, err = s.returns.ForOrder(ctx, userID, o.Number); err != nil {
-			return Order{}, err
-		}
+	o.Returns, err = s.returns.Info(ctx, userID, returns.OrderFacts{ID: o.ID, Status: string(o.Status), Paid: o.Paid,
+		CompletedAt: o.CompletedAt, Returnable: o.Returnable()})
+	if err != nil {
+		return Order{}, err
 	}
 	return o, nil
 }

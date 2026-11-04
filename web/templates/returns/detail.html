@@ -44,6 +44,8 @@
         <p class="co-line__name">{{.ProductName}}</p>
         {{with .VariantLabel}}<p class="co-line__variant">Varian: {{.}}</p>{{end}}
         <p class="co-line__price">{{rupiah .UnitPrice}} <span class="muted">× {{.Quantity}}</span></p>
+        {{if .Partial}}<p class="co-line__problem">Disetujui {{.ApprovedQuantity}} dari {{.Quantity}}</p>{{end}}
+        {{if .ReplacementQty}}<p class="muted">Pengganti: {{or .ReplacementLabel .ReplacementSKU}} × {{.ReplacementQty}}</p>{{end}}
       </div>
       <p class="co-line__subtotal">{{rupiah .Subtotal}}</p>
     </li>

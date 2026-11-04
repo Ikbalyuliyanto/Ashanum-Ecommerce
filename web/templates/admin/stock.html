@@ -1,0 +1,39 @@
+{{define "adm-title"}}Stok{{end}}
+{{template "admin" .}}
+{{define "admin-content"}}
+{{$p := .Data.Page}}{{$pg := .Data.Pager}}
+<section id="list-area" class="adm-section" hx-target="#list-area" hx-select="#list-area" hx-swap="outerHTML">
+  <div class="adm-head"><h1>Stok</h1></div>
+  <nav class="adm-tabs" hx-boost="true" aria-label="Filter stok">
+    <a href="{{$pg.With "status" ""}}"{{if eq $p.Filter.Status ""}} aria-current="page"{{end}}>Semua</a>
+    <a href="{{$pg.With "status" "low"}}"{{if eq $p.Filter.Status "low"}} aria-current="page"{{end}}>Stok rendah (≤ {{$p.LowStock}})</a>
+    <a href="{{$pg.With "status" "out"}}"{{if eq $p.Filter.Status "out"}} aria-current="page"{{end}}>Habis</a>
+  </nav>
+  <form class="adm-filter" hx-boost="true" action="/admin/stock" method="get" role="search">
+    {{with $p.Filter.Status}}<input type="hidden" name="status" value="{{.}}">{{end}}
+    <label class="visually-hidden" for="q">Cari nama atau SKU</label>
+    <input class="input" id="q" type="search" name="q" value="{{$p.Filter.Query}}" placeholder="Cari nama produk atau SKU" maxlength="100">
+    <button class="btn btn--sm" type="submit">{{icon "search"}} Cari</button>
+  </form>
+  <p class="muted adm-note">Stok rendah/habis menghitung varian aktif dari produk aktif. Setiap perubahan stok tercatat (siapa, kapan, alasan).</p>
+  {{if $p.Items}}
+  <div class="adm-table-wrap">
+  <table class="adm-table">
+    <thead><tr><th>Produk</th><th>Varian</th><th>SKU</th><th class="num">Stok</th><th></th></tr></thead>
+    <tbody>
+    {{range $p.Items}}
+      <tr{{if or (not .Active) (not .ProductActive)}} class="is-off"{{end}}>
+        <td data-label="Produk"><a href="/admin/products/{{.ProductID}}/edit" hx-boost="false">{{.ProductName}}</a>{{if not .ProductActive}} <span class="adm-badge adm-badge--muted">produk nonaktif</span>{{end}}</td>
+        <td data-label="Varian">{{or .VariantLabel "—"}}{{if not .Active}} <span class="adm-badge adm-badge--muted">tidak dijual</span>{{end}}</td>
+        <td data-label="SKU"><code>{{.SKU}}</code></td>
+        <td data-label="Stok" class="num">{{if eq .Stock 0}}<span class="adm-badge adm-badge--danger">0</span>{{else if .Low $p.LowStock}}<span class="adm-badge adm-badge--warn">{{.Stock}}</span>{{else}}{{.Stock}}{{end}}</td>
+        <td><a class="btn btn--sm" href="/admin/stock/{{.VariantID}}?return_to={{$pg.Current}}" hx-boost="false">Atur Stok</a></td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+  {{template "adm-pager" $pg}}
+  {{else}}<p class="adm-empty">Tidak ada varian.</p>{{end}}
+</section>
+{{end}}

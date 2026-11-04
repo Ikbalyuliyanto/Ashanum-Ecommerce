@@ -13,6 +13,10 @@
   <p class="order-banner__text">{{if $o.PaymentFailed}}Pembayaran belum berhasil. Silakan coba kembali.{{else}}Menunggu pembayaran.{{end}} Bayar sebelum <strong>{{datetime $o.PaymentDueAt}}</strong>.</p>
   {{else if eq $o.Status "WAITING_CONFIRMATION"}}
   <p class="order-banner__text">Pembayaran diterima. Pesanan menunggu konfirmasi penjual.</p>
+  {{else if eq $o.Status "PROCESSING"}}
+  <p class="order-banner__text">Pesanan dikonfirmasi dan sedang dikemas penjual.</p>
+  {{else if eq $o.Status "SHIPPED"}}
+  <p class="order-banner__text">Pesanan sudah dikirim{{with $o.Shipment}} lewat {{.Courier}}{{end}}.</p>
   {{else if eq $o.Status "CANCELLED"}}
   <p class="order-banner__text">{{$o.CancelReasonText}}</p>
   {{else if eq $o.Status "COMPLETED"}}
@@ -32,6 +36,16 @@
   {{with $o.CancelledAt}}<div><span class="muted">Waktu Pembatalan</span><span>{{datetime .}}</span></div>{{end}}
   {{with $o.CompletedAt}}<div><span class="muted">Waktu Selesai</span><span>{{datetime .}}</span></div>{{end}}
 </section>
+
+{{with $o.Shipment}}
+<section class="card order-meta" aria-labelledby="od-shipment">
+  <h2 class="card__title form-section-title" id="od-shipment">{{icon "truck"}} Pengiriman</h2>
+  <div><span class="muted">Kurir</span><span>{{.Courier}}{{with .Service}} · {{.}}{{end}}</span></div>
+  {{with .Tracking}}<div><span class="muted">No. Resi</span><strong>{{.}}</strong></div>{{end}}
+  <div><span class="muted">Dikirim</span><span>{{datetime .ShippedAt}}</span></div>
+  <p class="muted od-shipment-note">Data pengiriman diisi oleh penjual. Lacak paket di situs kurir; status pengiriman belum diperbarui otomatis.</p>
+</section>
+{{end}}
 
 <section class="card pay-card" aria-labelledby="od-payment">
   <h2 class="card__title form-section-title" id="od-payment">{{icon "wallet"}} Pembayaran</h2>

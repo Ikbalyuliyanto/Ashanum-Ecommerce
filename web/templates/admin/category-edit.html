@@ -1,0 +1,12 @@
+{{define "adm-title"}}Ubah Kategori{{end}}
+{{template "admin" .}}
+{{define "admin-content"}}
+<section class="adm-section">
+  <a class="adm-back" href="/admin/categories">{{icon "chevron-left"}} Kategori</a>
+  <div class="adm-head"><h1>Ubah {{.Data.Category.Name}}</h1></div>
+  <form class="card adm-card adm-form adm-narrow" action="/admin/categories/{{.Data.Category.ID}}" method="post">
+    {{template "adm-category-fields" (dict "Form" .Data.Form "Errors" .Data.Errors)}}
+    <button class="btn btn--primary" type="submit">Simpan Kategori</button>
+  </form>
+</section>
+{{end}}

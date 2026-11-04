@@ -7,7 +7,59 @@ package dbgen
 
 import (
 	"context"
+	"time"
 )
+
+const adminCategories = `-- name: AdminCategories :many
+SELECT c.id, c.name, c.slug, c.image_url, c.active, c.display_order, c.created_at, c.updated_at, (SELECT count(*) FROM products p WHERE p.category_id = c.id)::int AS product_count
+FROM categories c
+ORDER BY c.display_order, c.name, c.id
+`
+
+type AdminCategoriesRow struct {
+	ID           int64
+	Name         string
+	Slug         string
+	ImageUrl     *string
+	Active       bool
+	DisplayOrder int32
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	ProductCount int32
+}
+
+// AdminCategories lists every category (active or not) with its product
+// count. Categories are deactivated rather than deleted: products and
+// order history keep pointing at them.
+func (q *Queries) AdminCategories(ctx context.Context) ([]AdminCategoriesRow, error) {
+	rows, err := q.db.Query(ctx, adminCategories)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AdminCategoriesRow{}
+	for rows.Next() {
+		var i AdminCategoriesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Slug,
+			&i.ImageUrl,
+			&i.Active,
+			&i.DisplayOrder,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ProductCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
 
 const createCategory = `-- name: CreateCategory :one
 INSERT INTO categories (name, slug, image_url, active, display_order)

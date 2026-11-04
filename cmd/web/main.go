@@ -9,17 +9,25 @@
 //	                          overdue unpaid orders, list payments to review
 //	ecommerce recalculate-ratings
 //	                          rebuild cached product ratings from product_reviews
+//	ecommerce create-admin -email E -first-name N [-last-name N] [-promote]
+//	                          create an admin account (password read from
+//	                          stdin, never from a flag); -promote makes an
+//	                          existing account admin instead
 //	ecommerce version         print the build version
 package main
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io/fs"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"ecommerce/internal/auth"
@@ -29,6 +37,7 @@ import (
 	"ecommerce/internal/payment/midtrans"
 	"ecommerce/internal/review"
 	"ecommerce/internal/server"
+	"ecommerce/internal/validate"
 	"ecommerce/internal/view"
 	"ecommerce/web"
 )
@@ -71,8 +80,10 @@ func run(args []string) error {
 		return reconcilePayments(ctx, cfg, log, args)
 	case "recalculate-ratings":
 		return recalculateRatings(ctx, cfg)
+	case "create-admin":
+		return createAdmin(ctx, cfg, args)
 	default:
-		return fmt.Errorf("unknown command %q (want serve, migrate, reconcile-payments, recalculate-ratings, version)", cmd)
+		return fmt.Errorf("unknown command %q (want serve, migrate, reconcile-payments, recalculate-ratings, create-admin, version)", cmd)
 	}
 }
 
@@ -216,6 +227,105 @@ func recalculateRatings(ctx context.Context, cfg *config.Config) error {
 	}
 	fmt.Printf("products repaired: %d\n", n)
 	return nil
+}
+
+// createAdmin creates the first (or another) admin account. There is no
+// built-in admin and no default password: the password is read from stdin
+// (typed twice on a terminal, echo off where stty exists, or piped as one
+// line) and never accepted as a flag, printed or logged. An existing email
+// is only made admin with -promote (its password stays unchanged).
+func createAdmin(ctx context.Context, cfg *config.Config, args []string) error {
+	fs := flag.NewFlagSet("create-admin", flag.ContinueOnError)
+	email := fs.String("email", "", "admin email (required)")
+	first := fs.String("first-name", "", "first name (required for a new account)")
+	last := fs.String("last-name", "", "last name")
+	promote := fs.Bool("promote", false, "make an existing account admin (password unchanged)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*email) == "" {
+		return errors.New("create-admin: -email is required")
+	}
+	in := auth.AdminInput{Email: *email, FirstName: *first, LastName: *last, Promote: *promote}
+	if !*promote {
+		pw, err := readPassword()
+		if err != nil {
+			return err
+		}
+		in.Password = pw
+	}
+
+	db, err := database.Open(ctx, cfg.Database)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	res, err := auth.NewService(auth.NewRepository(db), cfg.Session.Secret).CreateAdmin(ctx, in)
+	var verr validate.Errors
+	switch {
+	case errors.As(err, &verr):
+		return fmt.Errorf("create-admin: %s", verr.Error())
+	case errors.Is(err, auth.ErrEmailTaken):
+		return errors.New("create-admin: this email already has an account; rerun with -promote to make it admin")
+	case errors.Is(err, auth.ErrUnknownEmail):
+		return errors.New("create-admin: no account with this email to promote")
+	case err != nil:
+		return err
+	}
+	switch {
+	case res.Created:
+		fmt.Printf("admin account created: %s (id %d)\n", res.User.Email, res.User.ID)
+	case res.Promoted:
+		fmt.Printf("account promoted to admin: %s (id %d)\n", res.User.Email, res.User.ID)
+	default:
+		fmt.Printf("already an admin, nothing changed: %s (id %d)\n", res.User.Email, res.User.ID)
+	}
+	return nil
+}
+
+// readPassword reads the new admin password from stdin. On a terminal it
+// asks twice with echo turned off when stty is available (Linux, the
+// HG680P); piped input is one line.
+func readPassword() (string, error) {
+	st, err := os.Stdin.Stat()
+	if err != nil {
+		return "", err
+	}
+	in := bufio.NewReader(os.Stdin)
+	if st.Mode()&os.ModeCharDevice == 0 { // piped
+		line, err := in.ReadString('\n')
+		if err != nil && line == "" {
+			return "", errors.New("create-admin: no password on stdin")
+		}
+		return strings.TrimRight(line, "\r\n"), nil
+	}
+	if stty("-echo") == nil {
+		defer func() { stty("echo"); fmt.Fprintln(os.Stderr) }()
+	}
+	ask := func(prompt string) (string, error) {
+		fmt.Fprint(os.Stderr, prompt)
+		line, err := in.ReadString('\n')
+		fmt.Fprintln(os.Stderr)
+		return strings.TrimRight(line, "\r\n"), err
+	}
+	pw, err := ask("Password admin (min. 12 karakter): ")
+	if err != nil {
+		return "", err
+	}
+	again, err := ask("Ulangi password: ")
+	if err != nil {
+		return "", err
+	}
+	if pw != again {
+		return "", errors.New("create-admin: passwords do not match")
+	}
+	return pw, nil
+}
+
+func stty(arg string) error {
+	cmd := exec.Command("stty", arg)
+	cmd.Stdin = os.Stdin
+	return cmd.Run()
 }
 
 // webFS returns the embedded templates/static in production. In development

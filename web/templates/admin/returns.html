@@ -1,0 +1,41 @@
+{{define "adm-title"}}Retur &amp; Refund{{end}}
+{{template "admin" .}}
+{{define "admin-content"}}
+{{$p := .Data.Page}}{{$pg := .Data.Pager}}{{$tab := .Data.Tab}}
+<section id="list-area" class="adm-section" hx-target="#list-area" hx-select="#list-area" hx-swap="outerHTML">
+  <div class="adm-head">
+    <h1>Retur &amp; Refund</h1>
+    <a class="btn btn--sm" href="/admin/refunds">{{icon "wallet"}} Daftar Refund</a>
+  </div>
+  <nav class="adm-tabs" hx-boost="true" aria-label="Status pengembalian">
+    {{range .Data.Tabs}}<a href="{{$pg.With "status" .Key}}"{{if eq .Key $tab.Key}} aria-current="page"{{end}}>{{.Label}}</a>{{end}}
+  </nav>
+  <form class="adm-filter" hx-boost="true" action="/admin/returns" method="get" role="search">
+    {{with $tab.Key}}<input type="hidden" name="status" value="{{.}}">{{end}}
+    <label class="visually-hidden" for="q">Cari nomor retur atau pesanan</label>
+    <input class="input" id="q" type="search" name="q" value="{{$p.Filter.Query}}" placeholder="Cari RET-… atau ASH-…" maxlength="100">
+    <button class="btn btn--sm" type="submit">{{icon "search"}} Cari</button>
+  </form>
+  {{if $p.Returns}}
+  <div class="adm-table-wrap">
+  <table class="adm-table">
+    <thead><tr><th>Retur</th><th>Pesanan</th><th>Produk</th><th>Jenis</th><th class="num">Nilai</th><th>Status</th><th>Diajukan</th></tr></thead>
+    <tbody>
+    {{range $p.Returns}}
+      <tr>
+        <td data-label="Retur"><a class="adm-strong" href="/admin/returns/{{.Number}}" hx-boost="false">{{.Number}}</a></td>
+        <td data-label="Pesanan"><a href="/admin/orders/{{.OrderNumber}}" hx-boost="false">{{.OrderNumber}}</a></td>
+        <td data-label="Produk">{{.ProductName}}{{if gt .ItemCount 1}} <span class="muted">· {{.ItemCount}} barang</span>{{end}}</td>
+        <td data-label="Jenis">{{.Type.Label}}</td>
+        <td data-label="Nilai" class="num">{{if .RefundAmount}}{{rupiah .RefundAmount}}{{else}}—{{end}}</td>
+        <td data-label="Status"><span class="adm-badge adm-badge--r-{{.Status}}">{{.Status.Label}}</span></td>
+        <td data-label="Diajukan">{{datetime .CreatedAt}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+  {{template "adm-pager" $pg}}
+  {{else}}<p class="adm-empty">Tidak ada pengajuan pengembalian.</p>{{end}}
+</section>
+{{end}}

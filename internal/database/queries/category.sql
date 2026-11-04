@@ -20,3 +20,11 @@ SET name          = @name,
     display_order = @display_order
 WHERE id = @id
 RETURNING *;
+
+-- AdminCategories lists every category (active or not) with its product
+-- count. Categories are deactivated rather than deleted: products and
+-- order history keep pointing at them.
+-- name: AdminCategories :many
+SELECT c.*, (SELECT count(*) FROM products p WHERE p.category_id = c.id)::int AS product_count
+FROM categories c
+ORDER BY c.display_order, c.name, c.id;

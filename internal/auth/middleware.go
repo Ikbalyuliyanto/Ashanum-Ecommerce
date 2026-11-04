@@ -89,3 +89,21 @@ func CurrentUser(r *http.Request) any {
 	}
 	return nil
 }
+
+// RequireAdmin lets only signed-in admins through. Guests are sent to the
+// login page (as RequireUser does); any other signed-in user gets deny,
+// which should answer as if the admin area did not exist. The role is read
+// from the database on every request (ActiveSession), so a demoted admin
+// loses access at once.
+func RequireAdmin(deny http.Handler) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if p, _ := FromContext(r.Context()); !p.IsAdmin() {
+				deny.ServeHTTP(w, r)
+				return
+			}
+			w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+			next.ServeHTTP(w, r)
+		}))
+	}
+}

@@ -10,6 +10,144 @@ import (
 	"time"
 )
 
+const adminReview = `-- name: AdminReview :one
+SELECT r.id, r.rating, r.comment, r.created_at, r.edited_at, r.hidden_at, r.moderation_reason,
+       r.product_id, oi.product_name, oi.variant_label, o.order_number,
+       u.email, coalesce(up.first_name, '')::text AS first_name, coalesce(up.last_name, '')::text AS last_name
+FROM product_reviews r
+JOIN order_items oi ON oi.id = r.order_item_id
+JOIN orders o ON o.id = r.order_id
+JOIN users u ON u.id = r.user_id
+LEFT JOIN user_profiles up ON up.user_id = r.user_id
+WHERE r.id = $1
+`
+
+type AdminReviewRow struct {
+	ID               int64
+	Rating           int16
+	Comment          string
+	CreatedAt        time.Time
+	EditedAt         *time.Time
+	HiddenAt         *time.Time
+	ModerationReason *string
+	ProductID        *int64
+	ProductName      string
+	VariantLabel     string
+	OrderNumber      string
+	Email            string
+	FirstName        string
+	LastName         string
+}
+
+func (q *Queries) AdminReview(ctx context.Context, id int64) (AdminReviewRow, error) {
+	row := q.db.QueryRow(ctx, adminReview, id)
+	var i AdminReviewRow
+	err := row.Scan(
+		&i.ID,
+		&i.Rating,
+		&i.Comment,
+		&i.CreatedAt,
+		&i.EditedAt,
+		&i.HiddenAt,
+		&i.ModerationReason,
+		&i.ProductID,
+		&i.ProductName,
+		&i.VariantLabel,
+		&i.OrderNumber,
+		&i.Email,
+		&i.FirstName,
+		&i.LastName,
+	)
+	return i, err
+}
+
+const adminReviews = `-- name: AdminReviews :many
+
+SELECT r.id, r.rating, r.comment, r.created_at, r.edited_at, r.hidden_at, r.moderation_reason,
+       r.product_id, oi.product_name, oi.variant_label, o.order_number,
+       u.email, coalesce(up.first_name, '')::text AS first_name, coalesce(up.last_name, '')::text AS last_name
+FROM product_reviews r
+JOIN order_items oi ON oi.id = r.order_item_id
+JOIN orders o ON o.id = r.order_id
+JOIN users u ON u.id = r.user_id
+LEFT JOIN user_profiles up ON up.user_id = r.user_id
+WHERE ($1::text = '' OR ($1::text = 'hidden') = (r.hidden_at IS NOT NULL))
+  AND ($2::int = 0 OR r.rating = $2::int)
+  AND ($3::text = '' OR oi.product_name ILIKE '%' || $3::text || '%')
+ORDER BY r.created_at DESC, r.id DESC
+LIMIT $5 OFFSET $4
+`
+
+type AdminReviewsParams struct {
+	Status    string
+	Rating    int32
+	Q         string
+	RowOffset int32
+	RowLimit  int32
+}
+
+type AdminReviewsRow struct {
+	ID               int64
+	Rating           int16
+	Comment          string
+	CreatedAt        time.Time
+	EditedAt         *time.Time
+	HiddenAt         *time.Time
+	ModerationReason *string
+	ProductID        *int64
+	ProductName      string
+	VariantLabel     string
+	OrderNumber      string
+	Email            string
+	FirstName        string
+	LastName         string
+}
+
+// Moderation (admin).
+// AdminReviews lists reviews newest first. status: "" (all), "visible" or
+// "hidden"; rating 0 means every rating; q searches the product name.
+// Buyer names are read only to be masked.
+func (q *Queries) AdminReviews(ctx context.Context, arg AdminReviewsParams) ([]AdminReviewsRow, error) {
+	rows, err := q.db.Query(ctx, adminReviews,
+		arg.Status,
+		arg.Rating,
+		arg.Q,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AdminReviewsRow{}
+	for rows.Next() {
+		var i AdminReviewsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Rating,
+			&i.Comment,
+			&i.CreatedAt,
+			&i.EditedAt,
+			&i.HiddenAt,
+			&i.ModerationReason,
+			&i.ProductID,
+			&i.ProductName,
+			&i.VariantLabel,
+			&i.OrderNumber,
+			&i.Email,
+			&i.FirstName,
+			&i.LastName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const createReview = `-- name: CreateReview :one
 INSERT INTO product_reviews (user_id, order_id, order_item_id, product_id, rating, comment)
 VALUES ($1, $2, $3, $4, $5, $6)
@@ -39,6 +177,25 @@ func (q *Queries) CreateReview(ctx context.Context, arg CreateReviewParams) (int
 	return id, err
 }
 
+const hideReview = `-- name: HideReview :execrows
+UPDATE product_reviews SET hidden_at = now(), hidden_by = $1, moderation_reason = $2
+WHERE id = $3 AND hidden_at IS NULL
+`
+
+type HideReviewParams struct {
+	AdminUserID *int64
+	Reason      *string
+	ID          int64
+}
+
+func (q *Queries) HideReview(ctx context.Context, arg HideReviewParams) (int64, error) {
+	result, err := q.db.Exec(ctx, hideReview, arg.AdminUserID, arg.Reason, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const lockProductRating = `-- name: LockProductRating :many
 SELECT id FROM products WHERE id = $1 FOR NO KEY UPDATE
 `
@@ -63,6 +220,23 @@ func (q *Queries) LockProductRating(ctx context.Context, id int64) ([]int64, err
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockReview = `-- name: LockReview :one
+SELECT id, product_id, hidden_at FROM product_reviews WHERE id = $1 FOR UPDATE
+`
+
+type LockReviewRow struct {
+	ID        int64
+	ProductID *int64
+	HiddenAt  *time.Time
+}
+
+func (q *Queries) LockReview(ctx context.Context, id int64) (LockReviewRow, error) {
+	row := q.db.QueryRow(ctx, lockReview, id)
+	var i LockReviewRow
+	err := row.Scan(&i.ID, &i.ProductID, &i.HiddenAt)
+	return i, err
 }
 
 const lockReviewTarget = `-- name: LockReviewTarget :one
@@ -136,40 +310,6 @@ func (q *Queries) LockUserReview(ctx context.Context, arg LockUserReviewParams) 
 	return i, err
 }
 
-const orderReviews = `-- name: OrderReviews :many
-SELECT order_item_id, id FROM product_reviews WHERE order_id = $1 AND user_id = $2
-`
-
-type OrderReviewsParams struct {
-	OrderID int64
-	UserID  int64
-}
-
-type OrderReviewsRow struct {
-	OrderItemID int64
-	ID          int64
-}
-
-func (q *Queries) OrderReviews(ctx context.Context, arg OrderReviewsParams) ([]OrderReviewsRow, error) {
-	rows, err := q.db.Query(ctx, orderReviews, arg.OrderID, arg.UserID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []OrderReviewsRow{}
-	for rows.Next() {
-		var i OrderReviewsRow
-		if err := rows.Scan(&i.OrderItemID, &i.ID); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const pendingReviewCount = `-- name: PendingReviewCount :one
 SELECT count(*)::int
 FROM order_items oi
@@ -239,7 +379,9 @@ func (q *Queries) PendingReviews(ctx context.Context, arg PendingReviewsParams) 
 }
 
 const productRatingSummary = `-- name: ProductRatingSummary :many
-SELECT rating, count(*)::int AS total FROM product_reviews WHERE product_id = $1 GROUP BY rating
+SELECT rating, count(*)::int AS total FROM product_reviews
+WHERE product_id = $1 AND hidden_at IS NULL
+GROUP BY rating
 `
 
 type ProductRatingSummaryRow struct {
@@ -247,6 +389,8 @@ type ProductRatingSummaryRow struct {
 	Total  int32
 }
 
+// ProductRatingSummary is the distribution alone, for a page past the last
+// review (where ProductReviewPage returns no row to carry it).
 func (q *Queries) ProductRatingSummary(ctx context.Context, productID *int64) ([]ProductRatingSummaryRow, error) {
 	rows, err := q.db.Query(ctx, productRatingSummary, productID)
 	if err != nil {
@@ -267,25 +411,37 @@ func (q *Queries) ProductRatingSummary(ctx context.Context, productID *int64) ([
 	return items, nil
 }
 
-const productReviews = `-- name: ProductReviews :many
-SELECT r.id, r.rating, r.comment, r.created_at, oi.variant_label,
-       u.email, coalesce(up.first_name, '')::text AS first_name, coalesce(up.last_name, '')::text AS last_name
-FROM product_reviews r
-JOIN order_items oi ON oi.id = r.order_item_id
-JOIN users u ON u.id = r.user_id
-LEFT JOIN user_profiles up ON up.user_id = r.user_id
-WHERE r.product_id = $1
-ORDER BY r.created_at DESC, r.id DESC
-LIMIT $3 OFFSET $2
+const productReviewPage = `-- name: ProductReviewPage :many
+WITH page AS (
+    SELECT r.id, r.user_id, r.order_item_id, r.rating, r.comment, r.created_at,
+           count(*) FILTER (WHERE r.rating = 1) OVER () AS stars1,
+           count(*) FILTER (WHERE r.rating = 2) OVER () AS stars2,
+           count(*) FILTER (WHERE r.rating = 3) OVER () AS stars3,
+           count(*) FILTER (WHERE r.rating = 4) OVER () AS stars4,
+           count(*) FILTER (WHERE r.rating = 5) OVER () AS stars5
+    FROM product_reviews r
+    WHERE r.product_id = $1 AND r.hidden_at IS NULL
+    ORDER BY r.created_at DESC, r.id DESC
+    LIMIT $3 OFFSET $2
+)
+SELECT pg.id, pg.rating, pg.comment, pg.created_at, oi.variant_label,
+       u.email, coalesce(up.first_name, '')::text AS first_name, coalesce(up.last_name, '')::text AS last_name,
+       pg.stars1::int AS stars1, pg.stars2::int AS stars2, pg.stars3::int AS stars3,
+       pg.stars4::int AS stars4, pg.stars5::int AS stars5
+FROM page pg
+JOIN order_items oi ON oi.id = pg.order_item_id
+JOIN users u ON u.id = pg.user_id
+LEFT JOIN user_profiles up ON up.user_id = pg.user_id
+ORDER BY pg.created_at DESC, pg.id DESC
 `
 
-type ProductReviewsParams struct {
+type ProductReviewPageParams struct {
 	ProductID *int64
 	RowOffset int32
 	RowLimit  int32
 }
 
-type ProductReviewsRow struct {
+type ProductReviewPageRow struct {
 	ID           int64
 	Rating       int16
 	Comment      string
@@ -294,19 +450,28 @@ type ProductReviewsRow struct {
 	Email        string
 	FirstName    string
 	LastName     string
+	Stars1       int32
+	Stars2       int32
+	Stars3       int32
+	Stars4       int32
+	Stars5       int32
 }
 
-// ProductReviews lists a product's reviews, newest first. Names are only
-// read to be masked; email, phone and address are never shown.
-func (q *Queries) ProductReviews(ctx context.Context, arg ProductReviewsParams) ([]ProductReviewsRow, error) {
-	rows, err := q.db.Query(ctx, productReviews, arg.ProductID, arg.RowOffset, arg.RowLimit)
+// ProductReviewPage is one page of a product's visible reviews, newest
+// first, with the star distribution of all its visible reviews on every
+// row: the product page needs one round trip for both. Window counts run
+// before LIMIT, over product_reviews only; buyer names are joined for the
+// page rows alone, only to be masked (email, phone and address are never
+// shown).
+func (q *Queries) ProductReviewPage(ctx context.Context, arg ProductReviewPageParams) ([]ProductReviewPageRow, error) {
+	rows, err := q.db.Query(ctx, productReviewPage, arg.ProductID, arg.RowOffset, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ProductReviewsRow{}
+	items := []ProductReviewPageRow{}
 	for rows.Next() {
-		var i ProductReviewsRow
+		var i ProductReviewPageRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Rating,
@@ -316,6 +481,11 @@ func (q *Queries) ProductReviews(ctx context.Context, arg ProductReviewsParams) 
 			&i.Email,
 			&i.FirstName,
 			&i.LastName,
+			&i.Stars1,
+			&i.Stars2,
+			&i.Stars3,
+			&i.Stars4,
+			&i.Stars5,
 		); err != nil {
 			return nil, err
 		}
@@ -333,7 +503,7 @@ WITH agg AS (
            coalesce(avg(r.rating)::float8, 0) AS average,
            count(r.id)::int AS total
     FROM products p
-    LEFT JOIN product_reviews r ON r.product_id = p.id
+    LEFT JOIN product_reviews r ON r.product_id = p.id AND r.hidden_at IS NULL
     GROUP BY p.id
 )
 UPDATE products p SET rating_average = agg.average, rating_count = agg.total
@@ -342,7 +512,7 @@ WHERE p.id = agg.id AND (p.rating_average <> agg.average OR p.rating_count <> ag
 `
 
 // RecalculateAllRatings repairs every product whose cached rating differs
-// from product_reviews and returns how many were fixed.
+// from its visible reviews and returns how many were fixed.
 func (q *Queries) RecalculateAllRatings(ctx context.Context) (int64, error) {
 	result, err := q.db.Exec(ctx, recalculateAllRatings)
 	if err != nil {
@@ -353,13 +523,15 @@ func (q *Queries) RecalculateAllRatings(ctx context.Context) (int64, error) {
 
 const recalculateProductRating = `-- name: RecalculateProductRating :exec
 UPDATE products p SET
-    rating_average = coalesce((SELECT avg(r.rating)::float8 FROM product_reviews r WHERE r.product_id = p.id), 0),
-    rating_count   = (SELECT count(*)::int FROM product_reviews r WHERE r.product_id = p.id)
+    rating_average = coalesce((SELECT avg(r.rating)::float8 FROM product_reviews r
+                               WHERE r.product_id = p.id AND r.hidden_at IS NULL), 0),
+    rating_count   = (SELECT count(*)::int FROM product_reviews r
+                      WHERE r.product_id = p.id AND r.hidden_at IS NULL)
 WHERE p.id = $1
 `
 
 // RecalculateProductRating rebuilds the cached rating of one product from
-// product_reviews (the source of truth).
+// its visible reviews in product_reviews (the source of truth).
 func (q *Queries) RecalculateProductRating(ctx context.Context, id int64) error {
 	_, err := q.db.Exec(ctx, recalculateProductRating, id)
 	return err
@@ -419,7 +591,9 @@ type ReviewTargetRow struct {
 }
 
 // Product reviews. A review belongs to one purchased order item; buyer data
-// is always read through the user's own orders.
+// is always read through the user's own orders. A review hidden by
+// moderation (hidden_at) is kept but never public and never counted in the
+// product rating.
 // ReviewTarget is an order item of the user with its order status and the
 // existing review, if any.
 func (q *Queries) ReviewTarget(ctx context.Context, arg ReviewTargetParams) (ReviewTargetRow, error) {
@@ -440,8 +614,21 @@ func (q *Queries) ReviewTarget(ctx context.Context, arg ReviewTargetParams) (Rev
 	return i, err
 }
 
+const unhideReview = `-- name: UnhideReview :execrows
+UPDATE product_reviews SET hidden_at = NULL, hidden_by = NULL, moderation_reason = NULL
+WHERE id = $1 AND hidden_at IS NOT NULL
+`
+
+func (q *Queries) UnhideReview(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.Exec(ctx, unhideReview, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const updateReview = `-- name: UpdateReview :exec
-UPDATE product_reviews SET rating = $1, comment = $2
+UPDATE product_reviews SET rating = $1, comment = $2, edited_at = now()
 WHERE id = $3 AND user_id = $4
 `
 
@@ -452,6 +639,7 @@ type UpdateReviewParams struct {
 	UserID  int64
 }
 
+// UpdateReview is the buyer's edit; moderation stays as it is.
 func (q *Queries) UpdateReview(ctx context.Context, arg UpdateReviewParams) error {
 	_, err := q.db.Exec(ctx, updateReview,
 		arg.Rating,
@@ -463,7 +651,7 @@ func (q *Queries) UpdateReview(ctx context.Context, arg UpdateReviewParams) erro
 }
 
 const userReview = `-- name: UserReview :one
-SELECT r.id, r.order_item_id, r.product_id, r.rating, r.comment, r.created_at, r.updated_at,
+SELECT r.id, r.order_item_id, r.product_id, r.rating, r.comment, r.created_at, r.edited_at, r.hidden_at,
        oi.product_name, oi.product_slug, oi.variant_label, oi.image_url, o.order_number
 FROM product_reviews r
 JOIN order_items oi ON oi.id = r.order_item_id
@@ -483,7 +671,8 @@ type UserReviewRow struct {
 	Rating       int16
 	Comment      string
 	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	EditedAt     *time.Time
+	HiddenAt     *time.Time
 	ProductName  string
 	ProductSlug  string
 	VariantLabel string
@@ -501,7 +690,8 @@ func (q *Queries) UserReview(ctx context.Context, arg UserReviewParams) (UserRev
 		&i.Rating,
 		&i.Comment,
 		&i.CreatedAt,
-		&i.UpdatedAt,
+		&i.EditedAt,
+		&i.HiddenAt,
 		&i.ProductName,
 		&i.ProductSlug,
 		&i.VariantLabel,
@@ -512,7 +702,7 @@ func (q *Queries) UserReview(ctx context.Context, arg UserReviewParams) (UserRev
 }
 
 const userReviews = `-- name: UserReviews :many
-SELECT r.id, r.rating, r.comment, r.created_at, r.updated_at,
+SELECT r.id, r.rating, r.comment, r.created_at, r.edited_at, r.hidden_at,
        oi.product_name, oi.product_slug, oi.variant_label, oi.image_url, o.order_number,
        (p.id IS NOT NULL AND p.active)::boolean AS product_listed
 FROM product_reviews r
@@ -535,7 +725,8 @@ type UserReviewsRow struct {
 	Rating        int16
 	Comment       string
 	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	EditedAt      *time.Time
+	HiddenAt      *time.Time
 	ProductName   string
 	ProductSlug   string
 	VariantLabel  string
@@ -558,7 +749,8 @@ func (q *Queries) UserReviews(ctx context.Context, arg UserReviewsParams) ([]Use
 			&i.Rating,
 			&i.Comment,
 			&i.CreatedAt,
-			&i.UpdatedAt,
+			&i.EditedAt,
+			&i.HiddenAt,
 			&i.ProductName,
 			&i.ProductSlug,
 			&i.VariantLabel,

@@ -74,20 +74,306 @@ func (q *Queries) AddReturnItems(ctx context.Context, arg AddReturnItemsParams) 
 	return err
 }
 
+const adminRefund = `-- name: AdminRefund :one
+SELECT f.id, f.return_id, f.payment_id, f.amount, f.status, f.provider, f.provider_refund_id, f.requested_at, f.processed_at, f.failure_reason, f.created_at, f.updated_at, f.order_id, f.source, f.note, o.order_number, r.return_number, r.status AS return_status,
+       p.provider AS payment_provider, p.provider_order_id, p.provider_transaction_id, p.payment_type, p.amount AS paid_amount
+FROM refunds f
+JOIN orders o ON o.id = f.order_id
+LEFT JOIN returns r ON r.id = f.return_id
+LEFT JOIN payments p ON p.id = f.payment_id
+WHERE f.id = $1
+`
+
+type AdminRefundRow struct {
+	ID                    int64
+	ReturnID              *int64
+	PaymentID             *int64
+	Amount                int64
+	Status                string
+	Provider              *string
+	ProviderRefundID      *string
+	RequestedAt           time.Time
+	ProcessedAt           *time.Time
+	FailureReason         *string
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
+	OrderID               int64
+	Source                string
+	Note                  string
+	OrderNumber           string
+	ReturnNumber          *string
+	ReturnStatus          *string
+	PaymentProvider       *string
+	ProviderOrderID       *string
+	ProviderTransactionID *string
+	PaymentType           *string
+	PaidAmount            *int64
+}
+
+func (q *Queries) AdminRefund(ctx context.Context, id int64) (AdminRefundRow, error) {
+	row := q.db.QueryRow(ctx, adminRefund, id)
+	var i AdminRefundRow
+	err := row.Scan(
+		&i.ID,
+		&i.ReturnID,
+		&i.PaymentID,
+		&i.Amount,
+		&i.Status,
+		&i.Provider,
+		&i.ProviderRefundID,
+		&i.RequestedAt,
+		&i.ProcessedAt,
+		&i.FailureReason,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OrderID,
+		&i.Source,
+		&i.Note,
+		&i.OrderNumber,
+		&i.ReturnNumber,
+		&i.ReturnStatus,
+		&i.PaymentProvider,
+		&i.ProviderOrderID,
+		&i.ProviderTransactionID,
+		&i.PaymentType,
+		&i.PaidAmount,
+	)
+	return i, err
+}
+
+const adminRefunds = `-- name: AdminRefunds :many
+SELECT f.id, f.source, f.status, f.amount, f.requested_at, f.processed_at, f.provider, f.provider_refund_id,
+       o.order_number, r.return_number, p.provider_order_id
+FROM refunds f
+JOIN orders o ON o.id = f.order_id
+LEFT JOIN returns r ON r.id = f.return_id
+LEFT JOIN payments p ON p.id = f.payment_id
+WHERE (cardinality($1::text[]) = 0 OR f.status = ANY($1::text[]))
+  AND ($2::text = '' OR o.order_number ILIKE '%' || $2::text || '%' OR r.return_number ILIKE '%' || $2::text || '%')
+ORDER BY f.requested_at DESC, f.id DESC
+LIMIT $4 OFFSET $3
+`
+
+type AdminRefundsParams struct {
+	Statuses  []string
+	Q         string
+	RowOffset int32
+	RowLimit  int32
+}
+
+type AdminRefundsRow struct {
+	ID               int64
+	Source           string
+	Status           string
+	Amount           int64
+	RequestedAt      time.Time
+	ProcessedAt      *time.Time
+	Provider         *string
+	ProviderRefundID *string
+	OrderNumber      string
+	ReturnNumber     *string
+	ProviderOrderID  *string
+}
+
+// AdminRefunds lists refunds newest first; empty statuses means all, q
+// searches the order or return number.
+func (q *Queries) AdminRefunds(ctx context.Context, arg AdminRefundsParams) ([]AdminRefundsRow, error) {
+	rows, err := q.db.Query(ctx, adminRefunds,
+		arg.Statuses,
+		arg.Q,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AdminRefundsRow{}
+	for rows.Next() {
+		var i AdminRefundsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Source,
+			&i.Status,
+			&i.Amount,
+			&i.RequestedAt,
+			&i.ProcessedAt,
+			&i.Provider,
+			&i.ProviderRefundID,
+			&i.OrderNumber,
+			&i.ReturnNumber,
+			&i.ProviderOrderID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const adminReturn = `-- name: AdminReturn :one
+SELECT r.id, r.return_number, r.order_id, r.user_id, r.type, r.status, r.reason, r.description, r.refund_amount, r.resolution_note, r.idempotency_key, r.requested_at, r.approved_at, r.rejected_at, r.completed_at, r.created_at, r.updated_at, o.order_number, o.total AS order_total, u.email,
+       coalesce(up.first_name, '')::text AS first_name, coalesce(up.last_name, '')::text AS last_name
+FROM returns r
+JOIN orders o ON o.id = r.order_id
+JOIN users u ON u.id = r.user_id
+LEFT JOIN user_profiles up ON up.user_id = r.user_id
+WHERE r.return_number = $1
+`
+
+type AdminReturnRow struct {
+	ID             int64
+	ReturnNumber   string
+	OrderID        int64
+	UserID         int64
+	Type           string
+	Status         string
+	Reason         string
+	Description    string
+	RefundAmount   int64
+	ResolutionNote string
+	IdempotencyKey *string
+	RequestedAt    time.Time
+	ApprovedAt     *time.Time
+	RejectedAt     *time.Time
+	CompletedAt    *time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	OrderNumber    string
+	OrderTotal     int64
+	Email          string
+	FirstName      string
+	LastName       string
+}
+
+func (q *Queries) AdminReturn(ctx context.Context, returnNumber string) (AdminReturnRow, error) {
+	row := q.db.QueryRow(ctx, adminReturn, returnNumber)
+	var i AdminReturnRow
+	err := row.Scan(
+		&i.ID,
+		&i.ReturnNumber,
+		&i.OrderID,
+		&i.UserID,
+		&i.Type,
+		&i.Status,
+		&i.Reason,
+		&i.Description,
+		&i.RefundAmount,
+		&i.ResolutionNote,
+		&i.IdempotencyKey,
+		&i.RequestedAt,
+		&i.ApprovedAt,
+		&i.RejectedAt,
+		&i.CompletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OrderNumber,
+		&i.OrderTotal,
+		&i.Email,
+		&i.FirstName,
+		&i.LastName,
+	)
+	return i, err
+}
+
+const adminReturns = `-- name: AdminReturns :many
+SELECT r.id, r.return_number, o.order_number, r.type, r.status, r.refund_amount, r.created_at,
+       (SELECT coalesce(sum(ri.quantity), 0) FROM return_items ri WHERE ri.return_id = r.id)::int AS item_count,
+       fi.product_name, fi.image_url
+FROM returns r
+JOIN orders o ON o.id = r.order_id
+JOIN LATERAL (
+    SELECT oi.product_name, oi.image_url
+    FROM return_items ri JOIN order_items oi ON oi.id = ri.order_item_id
+    WHERE ri.return_id = r.id ORDER BY ri.id LIMIT 1
+) fi ON true
+WHERE (cardinality($1::text[]) = 0 OR r.status = ANY($1::text[]))
+  AND ($2::text = '' OR r.return_number ILIKE '%' || $2::text || '%' OR o.order_number ILIKE '%' || $2::text || '%')
+ORDER BY r.created_at DESC, r.id DESC
+LIMIT $4 OFFSET $3
+`
+
+type AdminReturnsParams struct {
+	Statuses  []string
+	Q         string
+	RowOffset int32
+	RowLimit  int32
+}
+
+type AdminReturnsRow struct {
+	ID           int64
+	ReturnNumber string
+	OrderNumber  string
+	Type         string
+	Status       string
+	RefundAmount int64
+	CreatedAt    time.Time
+	ItemCount    int32
+	ProductName  string
+	ImageUrl     string
+}
+
+// AdminReturns lists every return newest first; empty statuses means all,
+// q searches the return or order number.
+func (q *Queries) AdminReturns(ctx context.Context, arg AdminReturnsParams) ([]AdminReturnsRow, error) {
+	rows, err := q.db.Query(ctx, adminReturns,
+		arg.Statuses,
+		arg.Q,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AdminReturnsRow{}
+	for rows.Next() {
+		var i AdminReturnsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ReturnNumber,
+			&i.OrderNumber,
+			&i.Type,
+			&i.Status,
+			&i.RefundAmount,
+			&i.CreatedAt,
+			&i.ItemCount,
+			&i.ProductName,
+			&i.ImageUrl,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const createRefund = `-- name: CreateRefund :one
-INSERT INTO refunds (return_id, payment_id, amount)
-VALUES ($1, $2, $3)
-RETURNING id, return_id, payment_id, amount, status, provider, provider_refund_id, requested_at, processed_at, failure_reason, created_at, updated_at
+INSERT INTO refunds (return_id, order_id, payment_id, amount, source)
+VALUES ($1, $2, $3, $4, 'RETURN')
+RETURNING id, return_id, payment_id, amount, status, provider, provider_refund_id, requested_at, processed_at, failure_reason, created_at, updated_at, order_id, source, note
 `
 
 type CreateRefundParams struct {
-	ReturnID  int64
+	ReturnID  *int64
+	OrderID   int64
 	PaymentID *int64
 	Amount    int64
 }
 
 func (q *Queries) CreateRefund(ctx context.Context, arg CreateRefundParams) (Refund, error) {
-	row := q.db.QueryRow(ctx, createRefund, arg.ReturnID, arg.PaymentID, arg.Amount)
+	row := q.db.QueryRow(ctx, createRefund,
+		arg.ReturnID,
+		arg.OrderID,
+		arg.PaymentID,
+		arg.Amount,
+	)
 	var i Refund
 	err := row.Scan(
 		&i.ID,
@@ -102,6 +388,9 @@ func (q *Queries) CreateRefund(ctx context.Context, arg CreateRefundParams) (Ref
 		&i.FailureReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OrderID,
+		&i.Source,
+		&i.Note,
 	)
 	return i, err
 }
@@ -140,6 +429,24 @@ func (q *Queries) CreateReturn(ctx context.Context, arg CreateReturnParams) (Cre
 	var i CreateReturnRow
 	err := row.Scan(&i.ID, &i.ReturnNumber)
 	return i, err
+}
+
+const failRefund = `-- name: FailRefund :execrows
+UPDATE refunds SET status = 'FAILED', failure_reason = $1, processed_at = now()
+WHERE id = $2 AND status IN ('PENDING', 'APPROVED', 'PROCESSING')
+`
+
+type FailRefundParams struct {
+	Reason *string
+	ID     int64
+}
+
+func (q *Queries) FailRefund(ctx context.Context, arg FailRefundParams) (int64, error) {
+	result, err := q.db.Exec(ctx, failRefund, arg.Reason, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getReturn = `-- name: GetReturn :one
@@ -199,6 +506,34 @@ func (q *Queries) GetReturn(ctx context.Context, arg GetReturnParams) (GetReturn
 		&i.OrderNumber,
 	)
 	return i, err
+}
+
+const hasActiveRefund = `-- name: HasActiveRefund :one
+SELECT EXISTS (SELECT 1 FROM refunds WHERE return_id = $1 AND status NOT IN ('FAILED', 'CANCELLED'))::boolean
+`
+
+func (q *Queries) HasActiveRefund(ctx context.Context, returnID *int64) (bool, error) {
+	row := q.db.QueryRow(ctx, hasActiveRefund, returnID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const inspectReturnItems = `-- name: InspectReturnItems :exec
+UPDATE return_items ri SET condition = ($1::text[])[x.n], inspected_at = now()
+FROM unnest($3::bigint[]) WITH ORDINALITY AS x(id, n)
+WHERE ri.id = x.id AND ri.return_id = $2
+`
+
+type InspectReturnItemsParams struct {
+	Conditions []string
+	ReturnID   int64
+	Ids        []int64
+}
+
+func (q *Queries) InspectReturnItems(ctx context.Context, arg InspectReturnItemsParams) error {
+	_, err := q.db.Exec(ctx, inspectReturnItems, arg.Conditions, arg.ReturnID, arg.Ids)
+	return err
 }
 
 const listReturns = `-- name: ListReturns :many
@@ -267,6 +602,61 @@ func (q *Queries) ListReturns(ctx context.Context, arg ListReturnsParams) ([]Lis
 	return items, nil
 }
 
+const lockRefund = `-- name: LockRefund :one
+SELECT f.id, f.return_id, f.order_id, f.source, f.status, f.amount, r.status AS return_status
+FROM refunds f
+LEFT JOIN returns r ON r.id = f.return_id
+WHERE f.id = $1
+FOR UPDATE OF f
+`
+
+type LockRefundRow struct {
+	ID           int64
+	ReturnID     *int64
+	OrderID      int64
+	Source       string
+	Status       string
+	Amount       int64
+	ReturnStatus *string
+}
+
+// LockRefund row-locks a refund with its return's status (if any).
+func (q *Queries) LockRefund(ctx context.Context, id int64) (LockRefundRow, error) {
+	row := q.db.QueryRow(ctx, lockRefund, id)
+	var i LockRefundRow
+	err := row.Scan(
+		&i.ID,
+		&i.ReturnID,
+		&i.OrderID,
+		&i.Source,
+		&i.Status,
+		&i.Amount,
+		&i.ReturnStatus,
+	)
+	return i, err
+}
+
+const lockRefundPayment = `-- name: LockRefundPayment :one
+
+SELECT id, amount FROM payments WHERE id = $1 FOR UPDATE
+`
+
+type LockRefundPaymentRow struct {
+	ID     int64
+	Amount int64
+}
+
+// Refunds. No payment provider is called: the shop carries the refund out
+// (e.g. a bank transfer) and records the outcome here.
+// LockRefundPayment serializes refunds of one payment, so concurrent
+// refunds can never add up to more than was paid.
+func (q *Queries) LockRefundPayment(ctx context.Context, id int64) (LockRefundPaymentRow, error) {
+	row := q.db.QueryRow(ctx, lockRefundPayment, id)
+	var i LockRefundPaymentRow
+	err := row.Scan(&i.ID, &i.Amount)
+	return i, err
+}
+
 const lockReturn = `-- name: LockReturn :one
 
 SELECT r.id, r.return_number, r.order_id, r.user_id, r.type, r.status, r.refund_amount,
@@ -289,7 +679,7 @@ type LockReturnRow struct {
 	PaidAmount   *int64
 }
 
-// Status changes (admin-ready service; no route in this phase).
+// Status changes (admin).
 // LockReturn row-locks a return and reads the order's PAID payment (the
 // one a refund pays back).
 func (q *Queries) LockReturn(ctx context.Context, id int64) (LockReturnRow, error) {
@@ -384,6 +774,69 @@ func (q *Queries) LockReturnItems(ctx context.Context, arg LockReturnItemsParams
 	return items, nil
 }
 
+const lockReturnLines = `-- name: LockReturnLines :many
+SELECT ri.id, ri.order_item_id, ri.quantity, ri.unit_price, ri.approved_quantity, ri.condition,
+       ri.restocked_at, ri.replacement_quantity,
+       oi.product_id, oi.variant_id, oi.product_name, oi.sku, oi.variant_label
+FROM return_items ri
+JOIN order_items oi ON oi.id = ri.order_item_id
+WHERE ri.return_id = $1
+ORDER BY ri.id
+FOR UPDATE OF ri
+`
+
+type LockReturnLinesRow struct {
+	ID                  int64
+	OrderItemID         int64
+	Quantity            int32
+	UnitPrice           int64
+	ApprovedQuantity    *int32
+	Condition           *string
+	RestockedAt         *time.Time
+	ReplacementQuantity *int32
+	ProductID           *int64
+	VariantID           *int64
+	ProductName         string
+	Sku                 string
+	VariantLabel        string
+}
+
+// LockReturnLines row-locks a return's lines (id order) with their order
+// item, for approval, inspection, restock and exchange.
+func (q *Queries) LockReturnLines(ctx context.Context, returnID int64) ([]LockReturnLinesRow, error) {
+	rows, err := q.db.Query(ctx, lockReturnLines, returnID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LockReturnLinesRow{}
+	for rows.Next() {
+		var i LockReturnLinesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrderItemID,
+			&i.Quantity,
+			&i.UnitPrice,
+			&i.ApprovedQuantity,
+			&i.Condition,
+			&i.RestockedAt,
+			&i.ReplacementQuantity,
+			&i.ProductID,
+			&i.VariantID,
+			&i.ProductName,
+			&i.Sku,
+			&i.VariantLabel,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockReturnOrder = `-- name: LockReturnOrder :one
 SELECT o.id, o.order_number, o.status, o.completed_at,
        (o.paid_at IS NOT NULL AND EXISTS (
@@ -419,13 +872,51 @@ func (q *Queries) LockReturnOrder(ctx context.Context, arg LockReturnOrderParams
 	return i, err
 }
 
+const markRefundProcessing = `-- name: MarkRefundProcessing :execrows
+UPDATE refunds SET status = 'PROCESSING', note = CASE WHEN $1::text <> '' THEN $1::text ELSE note END
+WHERE id = $2 AND status IN ('PENDING', 'APPROVED')
+`
+
+type MarkRefundProcessingParams struct {
+	Note string
+	ID   int64
+}
+
+func (q *Queries) MarkRefundProcessing(ctx context.Context, arg MarkRefundProcessingParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markRefundProcessing, arg.Note, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const markRestocked = `-- name: MarkRestocked :execrows
+UPDATE return_items SET restocked_quantity = $1, restocked_at = now()
+WHERE id = $2 AND restocked_at IS NULL AND condition = 'RESTOCKABLE'
+`
+
+type MarkRestockedParams struct {
+	Quantity *int32
+	ID       int64
+}
+
+// MarkRestocked records the restock of one line, once: 0 rows when it was
+// already restocked (a repeated request changes nothing).
+func (q *Queries) MarkRestocked(ctx context.Context, arg MarkRestockedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markRestocked, arg.Quantity, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const openRefund = `-- name: OpenRefund :one
-SELECT id, return_id, payment_id, amount, status, provider, provider_refund_id, requested_at, processed_at, failure_reason, created_at, updated_at FROM refunds
+SELECT id, return_id, payment_id, amount, status, provider, provider_refund_id, requested_at, processed_at, failure_reason, created_at, updated_at, order_id, source, note FROM refunds
 WHERE return_id = $1 AND status IN ('PENDING', 'APPROVED', 'PROCESSING')
 FOR UPDATE
 `
 
-func (q *Queries) OpenRefund(ctx context.Context, returnID int64) (Refund, error) {
+func (q *Queries) OpenRefund(ctx context.Context, returnID *int64) (Refund, error) {
 	row := q.db.QueryRow(ctx, openRefund, returnID)
 	var i Refund
 	err := row.Scan(
@@ -441,6 +932,9 @@ func (q *Queries) OpenRefund(ctx context.Context, returnID int64) (Refund, error
 		&i.FailureReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OrderID,
+		&i.Source,
+		&i.Note,
 	)
 	return i, err
 }
@@ -491,24 +985,41 @@ func (q *Queries) OrderReturns(ctx context.Context, arg OrderReturnsParams) ([]O
 
 const recordRefundResult = `-- name: RecordRefundResult :execrows
 UPDATE refunds SET status = 'SUCCEEDED', processed_at = now(),
-    provider = $1, provider_refund_id = $2
-WHERE id = $3 AND status IN ('PENDING', 'APPROVED', 'PROCESSING')
+    provider = $1, provider_refund_id = $2, note = $3
+WHERE id = $4 AND status IN ('PENDING', 'APPROVED', 'PROCESSING')
 `
 
 type RecordRefundResultParams struct {
 	Provider         *string
 	ProviderRefundID *string
+	Note             string
 	ID               int64
 }
 
 // RecordRefundResult stores the outcome of a refund that was carried out
 // outside this system (no provider call is made here).
 func (q *Queries) RecordRefundResult(ctx context.Context, arg RecordRefundResultParams) (int64, error) {
-	result, err := q.db.Exec(ctx, recordRefundResult, arg.Provider, arg.ProviderRefundID, arg.ID)
+	result, err := q.db.Exec(ctx, recordRefundResult,
+		arg.Provider,
+		arg.ProviderRefundID,
+		arg.Note,
+		arg.ID,
+	)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const refundReturnID = `-- name: RefundReturnID :one
+SELECT return_id FROM refunds WHERE id = $1
+`
+
+func (q *Queries) RefundReturnID(ctx context.Context, id int64) (*int64, error) {
+	row := q.db.QueryRow(ctx, refundReturnID, id)
+	var return_id *int64
+	err := row.Scan(&return_id)
+	return return_id, err
 }
 
 const refundedForPayment = `-- name: RefundedForPayment :one
@@ -523,6 +1034,57 @@ func (q *Queries) RefundedForPayment(ctx context.Context, paymentID *int64) (int
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const replacementVariants = `-- name: ReplacementVariants :many
+SELECT v.id, v.product_id, v.sku, v.stock, v.price,
+       coalesce((SELECT string_agg(av.value, ' / ' ORDER BY a.display_order, a.id)
+                 FROM product_variant_values vv
+                 JOIN product_attributes a        ON a.id = vv.attribute_id
+                 JOIN product_attribute_values av ON av.id = vv.value_id
+                 WHERE vv.variant_id = v.id), '')::text AS variant_label
+FROM product_variants v
+JOIN products p ON p.id = v.product_id
+WHERE v.product_id = ANY($1::bigint[]) AND v.active
+ORDER BY v.product_id, v.id
+`
+
+type ReplacementVariantsRow struct {
+	ID           int64
+	ProductID    int64
+	Sku          string
+	Stock        int32
+	Price        int64
+	VariantLabel string
+}
+
+// ReplacementVariants are the active variants of the given products, the
+// choices for an exchange.
+func (q *Queries) ReplacementVariants(ctx context.Context, productIds []int64) ([]ReplacementVariantsRow, error) {
+	rows, err := q.db.Query(ctx, replacementVariants, productIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReplacementVariantsRow{}
+	for rows.Next() {
+		var i ReplacementVariantsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProductID,
+			&i.Sku,
+			&i.Stock,
+			&i.Price,
+			&i.VariantLabel,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const returnEventsOf = `-- name: ReturnEventsOf :many
@@ -592,9 +1154,22 @@ func (q *Queries) ReturnEvidenceOf(ctx context.Context, returnID int64) ([]Retur
 	return items, nil
 }
 
+const returnIDByNumber = `-- name: ReturnIDByNumber :one
+SELECT id FROM returns WHERE return_number = $1
+`
+
+func (q *Queries) ReturnIDByNumber(ctx context.Context, returnNumber string) (int64, error) {
+	row := q.db.QueryRow(ctx, returnIDByNumber, returnNumber)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 const returnItemsOf = `-- name: ReturnItemsOf :many
-SELECT ri.id, ri.order_item_id, ri.quantity, ri.unit_price,
-       oi.product_name, oi.variant_label, oi.image_url
+SELECT ri.id, ri.order_item_id, ri.quantity, ri.unit_price, ri.approved_quantity, ri.condition,
+       ri.inspected_at, ri.restocked_quantity, ri.restocked_at,
+       ri.replacement_variant_id, ri.replacement_sku, ri.replacement_label, ri.replacement_quantity,
+       oi.product_id, oi.variant_id, oi.product_name, oi.sku, oi.variant_label, oi.image_url
 FROM return_items ri
 JOIN order_items oi ON oi.id = ri.order_item_id
 WHERE ri.return_id = $1
@@ -602,13 +1177,25 @@ ORDER BY ri.id
 `
 
 type ReturnItemsOfRow struct {
-	ID           int64
-	OrderItemID  int64
-	Quantity     int32
-	UnitPrice    int64
-	ProductName  string
-	VariantLabel string
-	ImageUrl     string
+	ID                   int64
+	OrderItemID          int64
+	Quantity             int32
+	UnitPrice            int64
+	ApprovedQuantity     *int32
+	Condition            *string
+	InspectedAt          *time.Time
+	RestockedQuantity    *int32
+	RestockedAt          *time.Time
+	ReplacementVariantID *int64
+	ReplacementSku       *string
+	ReplacementLabel     *string
+	ReplacementQuantity  *int32
+	ProductID            *int64
+	VariantID            *int64
+	ProductName          string
+	Sku                  string
+	VariantLabel         string
+	ImageUrl             string
 }
 
 func (q *Queries) ReturnItemsOf(ctx context.Context, returnID int64) ([]ReturnItemsOfRow, error) {
@@ -625,7 +1212,19 @@ func (q *Queries) ReturnItemsOf(ctx context.Context, returnID int64) ([]ReturnIt
 			&i.OrderItemID,
 			&i.Quantity,
 			&i.UnitPrice,
+			&i.ApprovedQuantity,
+			&i.Condition,
+			&i.InspectedAt,
+			&i.RestockedQuantity,
+			&i.RestockedAt,
+			&i.ReplacementVariantID,
+			&i.ReplacementSku,
+			&i.ReplacementLabel,
+			&i.ReplacementQuantity,
+			&i.ProductID,
+			&i.VariantID,
 			&i.ProductName,
+			&i.Sku,
 			&i.VariantLabel,
 			&i.ImageUrl,
 		); err != nil {
@@ -678,8 +1277,13 @@ type ReturnOrderRow struct {
 }
 
 // Returns (refund / exchange requests) and refunds. Buyer queries are
-// scoped by user_id. A return is created in one transaction that locks the
-// order row, then the selected order items in id order.
+// scoped by user_id; admin queries (below) are reached only through the
+// admin role. A return is created in one transaction that locks the order
+// row, then the selected order items in id order.
+//
+// A return that still counts (not rejected or cancelled) holds
+// coalesce(approved_quantity, quantity) units of each of its order items:
+// the requested quantity until the shop reviews it, then what was approved.
 func (q *Queries) ReturnOrder(ctx context.Context, arg ReturnOrderParams) (ReturnOrderRow, error) {
 	row := q.db.QueryRow(ctx, returnOrder, arg.OrderNumber, arg.UserID)
 	var i ReturnOrderRow
@@ -694,10 +1298,10 @@ func (q *Queries) ReturnOrder(ctx context.Context, arg ReturnOrderParams) (Retur
 }
 
 const returnRefunds = `-- name: ReturnRefunds :many
-SELECT id, return_id, payment_id, amount, status, provider, provider_refund_id, requested_at, processed_at, failure_reason, created_at, updated_at FROM refunds WHERE return_id = $1 ORDER BY id
+SELECT id, return_id, payment_id, amount, status, provider, provider_refund_id, requested_at, processed_at, failure_reason, created_at, updated_at, order_id, source, note FROM refunds WHERE return_id = $1 ORDER BY id
 `
 
-func (q *Queries) ReturnRefunds(ctx context.Context, returnID int64) ([]Refund, error) {
+func (q *Queries) ReturnRefunds(ctx context.Context, returnID *int64) ([]Refund, error) {
 	rows, err := q.db.Query(ctx, returnRefunds, returnID)
 	if err != nil {
 		return nil, err
@@ -719,6 +1323,9 @@ func (q *Queries) ReturnRefunds(ctx context.Context, returnID int64) ([]Refund, 
 			&i.FailureReason,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.OrderID,
+			&i.Source,
+			&i.Note,
 		); err != nil {
 			return nil, err
 		}
@@ -732,7 +1339,7 @@ func (q *Queries) ReturnRefunds(ctx context.Context, returnID int64) ([]Refund, 
 
 const returnableItems = `-- name: ReturnableItems :many
 SELECT oi.id, oi.product_name, oi.variant_label, oi.image_url, oi.unit_price, oi.quantity,
-       coalesce((SELECT sum(ri.quantity) FROM return_items ri
+       coalesce((SELECT sum(coalesce(ri.approved_quantity, ri.quantity)) FROM return_items ri
                  JOIN returns r ON r.id = ri.return_id
                  WHERE ri.order_item_id = oi.id AND r.status NOT IN ('REJECTED', 'CANCELLED')), 0)::int AS returned
 FROM order_items oi
@@ -750,8 +1357,8 @@ type ReturnableItemsRow struct {
 	Returned     int32
 }
 
-// ReturnableItems lists an order's items with the quantity already in
-// returns that still count (not rejected or cancelled).
+// ReturnableItems lists an order's items with the quantity already held by
+// returns that still count.
 func (q *Queries) ReturnableItems(ctx context.Context, orderID int64) ([]ReturnableItemsRow, error) {
 	rows, err := q.db.Query(ctx, returnableItems, orderID)
 	if err != nil {
@@ -778,6 +1385,66 @@ func (q *Queries) ReturnableItems(ctx context.Context, orderID int64) ([]Returna
 		return nil, err
 	}
 	return items, nil
+}
+
+const setApprovedQuantities = `-- name: SetApprovedQuantities :exec
+UPDATE return_items ri SET approved_quantity = ($1::int[])[x.n]
+FROM unnest($3::bigint[]) WITH ORDINALITY AS x(id, n)
+WHERE ri.id = x.id AND ri.return_id = $2
+`
+
+type SetApprovedQuantitiesParams struct {
+	Quantities []int32
+	ReturnID   int64
+	Ids        []int64
+}
+
+func (q *Queries) SetApprovedQuantities(ctx context.Context, arg SetApprovedQuantitiesParams) error {
+	_, err := q.db.Exec(ctx, setApprovedQuantities, arg.Quantities, arg.ReturnID, arg.Ids)
+	return err
+}
+
+const setReplacement = `-- name: SetReplacement :execrows
+UPDATE return_items SET replacement_variant_id = $1, replacement_sku = $2,
+                        replacement_label = $3, replacement_quantity = $4
+WHERE id = $5 AND replacement_quantity IS NULL
+`
+
+type SetReplacementParams struct {
+	VariantID *int64
+	Sku       *string
+	Label     *string
+	Quantity  *int32
+	ID        int64
+}
+
+func (q *Queries) SetReplacement(ctx context.Context, arg SetReplacementParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setReplacement,
+		arg.VariantID,
+		arg.Sku,
+		arg.Label,
+		arg.Quantity,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setReturnAmount = `-- name: SetReturnAmount :exec
+UPDATE returns SET refund_amount = $1 WHERE id = $2
+`
+
+type SetReturnAmountParams struct {
+	RefundAmount int64
+	ID           int64
+}
+
+// SetReturnAmount stores the refund owed for the approved quantities.
+func (q *Queries) SetReturnAmount(ctx context.Context, arg SetReturnAmountParams) error {
+	_, err := q.db.Exec(ctx, setReturnAmount, arg.RefundAmount, arg.ID)
+	return err
 }
 
 const setReturnStatus = `-- name: SetReturnStatus :execrows

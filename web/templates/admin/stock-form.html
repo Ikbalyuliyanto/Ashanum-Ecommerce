@@ -1,0 +1,44 @@
+{{define "adm-title"}}Atur Stok {{.Data.Item.SKU}}{{end}}
+{{template "admin" .}}
+{{define "admin-content"}}
+{{$it := .Data.Item}}{{$f := .Data.Form}}{{$e := .Data.Errors}}
+<section class="adm-section">
+  <a class="adm-back" href="{{.Data.Back}}">{{icon "chevron-left"}} Kembali</a>
+  <div class="adm-head"><h1>Atur Stok</h1></div>
+  <div class="adm-grid">
+    <div class="adm-col">
+      <form class="card adm-card adm-form" action="/admin/stock/{{$it.VariantID}}" method="post">
+        <input type="hidden" name="return_to" value="{{.Data.Back}}">
+        <p><strong>{{$it.ProductName}}</strong><br><span class="muted">{{with $it.VariantLabel}}{{.}} · {{end}}SKU {{$it.SKU}}</span></p>
+        <p class="adm-big">Stok saat ini: <strong>{{$it.Stock}}</strong></p>
+        <fieldset class="field">
+          <legend class="field__label">Jenis perubahan</legend>
+          <div class="choice-group adm-choices">
+            <label class="check"><input type="radio" name="mode" value="add"{{if eq $f.Mode "add"}} checked{{end}}> Tambah stok (barang masuk)</label>
+            <label class="check"><input type="radio" name="mode" value="remove"{{if eq $f.Mode "remove"}} checked{{end}}> Kurangi stok (rusak/hilang)</label>
+            <label class="check"><input type="radio" name="mode" value="set"{{if eq $f.Mode "set"}} checked{{end}}> Set stok menjadi (stock opname)</label>
+          </div>
+          {{with index $e "mode"}}<p class="field__error">{{.}}</p>{{end}}
+        </fieldset>
+        {{template "field" (dict "ID" "quantity" "Name" "quantity" "Label" "Jumlah" "Value" .Data.Qty "Mode" "numeric" "Required" true "Error" (index $e "quantity"))}}
+        {{template "field" (dict "ID" "reason" "Name" "reason" "Label" "Alasan" "Value" $f.Reason "Required" true "Max" 200 "Placeholder" "mis. Barang masuk dari supplier" "Error" (index $e "reason"))}}
+        <p class="field__hint">Stok tidak boleh negatif. Perubahan dicatat sebagai penyesuaian manual beserta stok sebelum/sesudah.</p>
+        <button class="btn btn--primary" type="submit">Simpan Perubahan Stok</button>
+      </form>
+    </div>
+    <div class="adm-col">
+      <div class="card adm-card">
+        <h2 class="adm-h2">Riwayat stok varian</h2>
+        {{if .Data.History}}
+        <ol class="adm-audit">
+          {{range .Data.History}}
+          <li><strong>{{.Type.Label}}: {{if gt .Delta 0}}+{{end}}{{.Delta}}</strong> <span>{{.Before}} → {{.After}}</span>
+            <span class="muted">{{datetime .At}}{{with .AdminEmail}} · {{.}}{{end}}</span>{{with .Reason}}<span class="adm-audit__meta">{{.}}</span>{{end}}</li>
+          {{end}}
+        </ol>
+        {{else}}<p class="muted">Belum ada perubahan stok.</p>{{end}}
+      </div>
+    </div>
+  </div>
+</section>
+{{end}}

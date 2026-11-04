@@ -16,8 +16,27 @@ WHERE o.user_id = @user_id
 ORDER BY o.created_at DESC, o.id DESC
 LIMIT @row_limit OFFSET @row_offset;
 
+-- GetOrder also reads whether a PAID payment exists (returns need it) and
+-- the manual shipment, so the detail page needs no extra round trip.
 -- name: GetOrder :one
-SELECT * FROM orders WHERE order_number = @order_number AND user_id = @user_id;
+SELECT o.*,
+       (o.paid_at IS NOT NULL AND EXISTS (
+            SELECT 1 FROM payments p WHERE p.order_id = o.id AND p.status = 'PAID'))::boolean AS paid,
+       s.courier_name, s.service_name, s.tracking_number, s.shipped_at
+FROM orders o
+LEFT JOIN shipments s ON s.order_id = o.id
+WHERE o.order_number = @order_number AND o.user_id = @user_id;
 
+-- ListOrderItems returns the lines with their review (if any) and the
+-- quantity held by returns that still count (not rejected or cancelled;
+-- the approved quantity once the shop reviewed the return). Order detail,
+-- review and return actions all read this one query.
 -- name: ListOrderItems :many
-SELECT * FROM order_items WHERE order_id = @order_id ORDER BY id;
+SELECT oi.*, r.id AS review_id,
+       coalesce((SELECT sum(coalesce(ri.approved_quantity, ri.quantity)) FROM return_items ri
+                 JOIN returns rt ON rt.id = ri.return_id
+                 WHERE ri.order_item_id = oi.id AND rt.status NOT IN ('REJECTED', 'CANCELLED')), 0)::int AS returned
+FROM order_items oi
+LEFT JOIN product_reviews r ON r.order_item_id = oi.id
+WHERE oi.order_id = @order_id
+ORDER BY oi.id;

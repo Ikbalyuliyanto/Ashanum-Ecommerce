@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"ecommerce/internal/audit"
 )
 
 type Options struct {
@@ -214,6 +216,27 @@ func (s *Service) CancelOrder(ctx context.Context, userID int64, number string) 
 	if err != nil {
 		return err
 	}
+	return s.cancelUnpaid(ctx, orderID, canceller{reason: reasonUserCancelled, source: sourceUser})
+}
+
+// CancelByAdmin cancels an unpaid order on an admin's decision, by the same
+// rules as the buyer's cancellation (provider transaction first, stock back
+// once), and records it in the admin audit log. A paid order is
+// ErrAlreadyPaid: the fulfillment service cancels those with a refund
+// record instead.
+func (s *Service) CancelByAdmin(ctx context.Context, adminID, orderID int64, note string) error {
+	return s.cancelUnpaid(ctx, orderID, canceller{reason: reasonAdminCancelled, source: sourceAdmin, adminID: adminID, note: note})
+}
+
+// canceller says who cancels an unpaid order and why.
+type canceller struct {
+	reason  string
+	source  string
+	adminID int64 // 0 unless an admin cancels
+	note    string
+}
+
+func (s *Service) cancelUnpaid(ctx context.Context, orderID int64, c canceller) error {
 	unlock := s.locks.lock(orderID)
 	defer unlock()
 
@@ -238,7 +261,7 @@ func (s *Service) CancelOrder(ctx context.Context, userID int64, number string) 
 			return ErrCancelUnavailable
 		}
 		if st.Found {
-			if _, err := s.apply(ctx, p.ID, orderID, st, sourceUser); err != nil {
+			if _, err := s.apply(ctx, p.ID, orderID, st, c.source); err != nil {
 				return err
 			}
 			switch st.Status {
@@ -261,7 +284,7 @@ func (s *Service) CancelOrder(ctx context.Context, userID int64, number string) 
 		if err := cancellable(o); err != nil {
 			return err
 		}
-		return s.cancelLocked(ctx, tx, o, reasonUserCancelled, StatusCancelled, sourceUser)
+		return s.cancelLocked(ctx, tx, o, c, StatusCancelled)
 	})
 }
 
@@ -276,7 +299,8 @@ func cancellable(o orderRow) error {
 }
 
 // cancelLocked cancels a locked unpaid order and restores its stock.
-func (s *Service) cancelLocked(ctx context.Context, tx *Repository, o orderRow, reason string, closeAs Status, source string) error {
+func (s *Service) cancelLocked(ctx context.Context, tx *Repository, o orderRow, c canceller, closeAs Status) error {
+	reason, source := c.reason, c.source
 	paid, err := tx.HasPaid(ctx, o.ID)
 	if err != nil {
 		return err
@@ -284,7 +308,7 @@ func (s *Service) cancelLocked(ctx context.Context, tx *Repository, o orderRow, 
 	if paid {
 		return ErrAlreadyPaid
 	}
-	res, err := tx.CancelAndRestore(ctx, o.ID, reason, closeAs)
+	res, err := tx.CancelAndRestore(ctx, o.ID, reason, closeAs, c.adminID)
 	if err != nil {
 		return err
 	}
@@ -303,7 +327,11 @@ func (s *Service) cancelLocked(ctx context.Context, tx *Repository, o orderRow, 
 		s.opts.Log.Warn("payment: restock skipped lines", "order", o.Number, "missing", res.Missing)
 	}
 	s.opts.Log.Info("payment: order cancelled", "order", o.Number, "reason", reason, "variants_restored", res.Variants)
-	return nil
+	if c.adminID == 0 {
+		return nil
+	}
+	return audit.Record(ctx, tx.q, audit.Entry{AdminID: c.adminID, Action: "order.cancel", EntityType: audit.EntityOrder,
+		EntityID: o.ID, Label: o.Number, Meta: map[string]any{"from": o.Status, "paid": false, "note": c.note, "variants_restored": res.Variants}})
 }
 
 // HandleNotification processes a provider notification: it is accepted only
@@ -417,7 +445,7 @@ func (s *Service) expireOverdue(ctx context.Context, orderID int64, source strin
 			cancelled = o.Status == orderCancelled
 			return nil
 		}
-		if err := s.cancelLocked(ctx, tx, o, reasonPaymentExpired, StatusExpired, source); err != nil {
+		if err := s.cancelLocked(ctx, tx, o, canceller{reason: reasonPaymentExpired, source: source}, StatusExpired); err != nil {
 			return err
 		}
 		cancelled = true
@@ -510,7 +538,7 @@ func (s *Service) apply(ctx context.Context, paymentID, orderID int64, st Provid
 					if err := tx.Event(ctx, ev); err != nil {
 						return err
 					}
-					return s.cancelLocked(ctx, tx, o, reasonPaymentExpired, StatusExpired, source)
+					return s.cancelLocked(ctx, tx, o, canceller{reason: reasonPaymentExpired, source: source}, StatusExpired)
 				}
 			}
 		}

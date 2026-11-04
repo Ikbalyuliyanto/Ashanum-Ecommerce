@@ -41,7 +41,8 @@
   {{template "stars" .Rating}}
   {{with .Comment}}<p class="review__comment">{{.}}</p>{{else}}<p class="muted review__comment">Tanpa komentar.</p>{{end}}
   <div class="review-card__foot">
-    <span class="muted">{{date .CreatedAt}}{{if .Edited}} · diubah {{date .UpdatedAt}}{{end}}</span>
+    <span class="muted">{{date .CreatedAt}}{{if .Edited}} · diubah {{date .EditedAt}}{{end}}</span>
+    {{if .Hidden}}<span class="review-card__hidden">Tidak ditampilkan publik (moderasi)</span>{{end}}
     <a class="btn btn--outline" href="/account/reviews/{{.ID}}/edit">Edit</a>
   </div>
 </article>

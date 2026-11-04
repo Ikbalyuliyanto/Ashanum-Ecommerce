@@ -17,9 +17,12 @@ import (
 
 type Role string
 
+// Roles. CUSTOMER is every account created by registration; ADMIN is only
+// granted by the create-admin command (or directly in the database), never
+// from a form.
 const (
-	RoleUser  Role = "USER"
-	RoleAdmin Role = "ADMIN"
+	RoleCustomer Role = "CUSTOMER"
+	RoleAdmin    Role = "ADMIN"
 )
 
 type User struct {
@@ -44,6 +47,24 @@ type Session struct {
 	ExpiresAt time.Time
 }
 
+// AdminInput creates an admin account (create-admin command). With Promote
+// an existing account is made ADMIN instead (its password is not changed);
+// without it an existing email is refused, never promoted silently.
+type AdminInput struct {
+	Email     string
+	Password  string
+	FirstName string
+	LastName  string
+	Promote   bool
+}
+
+// AdminResult says what CreateAdmin did.
+type AdminResult struct {
+	User     User
+	Created  bool // a new admin account
+	Promoted bool // an existing account became ADMIN
+}
+
 type RegisterInput struct {
 	Email           string
 	Password        string
@@ -52,6 +73,7 @@ type RegisterInput struct {
 
 var (
 	ErrEmailTaken         = errors.New("auth: email already registered")
+	ErrUnknownEmail       = errors.New("auth: no account with this email")
 	ErrInvalidCredentials = errors.New("auth: invalid email or password")
 	ErrSessionNotFound    = errors.New("auth: session not found or expired")
 	errUserNotFound       = errors.New("auth: user not found")

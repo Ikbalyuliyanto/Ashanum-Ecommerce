@@ -237,7 +237,7 @@ func TestSnapshotsSurviveLaterChanges(t *testing.T) {
 	f.exec("UPDATE user_addresses SET recipient_name = 'Orang Lain', street_address = 'Jl. Baru No. 1'")
 	// A variant held by an unpaid order cannot be deleted (migration 0007);
 	// once the order is completed the catalog row may go.
-	f.exec("UPDATE orders SET status = 'COMPLETED', completed_at = now()")
+	f.exec("UPDATE orders SET status = 'COMPLETED', paid_at = now(), completed_at = now()")
 	f.exec("DELETE FROM products")
 
 	o, err := f.orders.Get(f.ctx, uid, placed.OrderNumber)

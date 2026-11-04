@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -85,7 +86,7 @@ func (r *Repository) Get(ctx context.Context, userID, id int64) (Review, error) 
 	}
 	return Review{
 		ID: row.ID, OrderItemID: row.OrderItemID, Rating: int(row.Rating), Comment: row.Comment,
-		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, ProductName: row.ProductName, ProductSlug: row.ProductSlug,
+		CreatedAt: row.CreatedAt, EditedAt: row.EditedAt, Hidden: row.HiddenAt != nil, ProductName: row.ProductName, ProductSlug: row.ProductSlug,
 		VariantLabel: row.VariantLabel, ImageURL: row.ImageUrl, OrderNumber: row.OrderNumber,
 	}, nil
 }
@@ -129,7 +130,8 @@ func (r *Repository) History(ctx context.Context, userID int64, limit, offset in
 	out := make([]Review, len(rows))
 	for i, row := range rows {
 		out[i] = Review{
-			ID: row.ID, Rating: int(row.Rating), Comment: row.Comment, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+			ID: row.ID, Rating: int(row.Rating), Comment: row.Comment, CreatedAt: row.CreatedAt, EditedAt: row.EditedAt,
+			Hidden:      row.HiddenAt != nil,
 			ProductName: row.ProductName, ProductSlug: row.ProductSlug, VariantLabel: row.VariantLabel,
 			ImageURL: row.ImageUrl, OrderNumber: row.OrderNumber, ProductListed: row.ProductListed,
 		}
@@ -155,19 +157,6 @@ func (r *Repository) PendingCount(ctx context.Context, userID int64) (int, error
 	return int(n), err
 }
 
-// OrderReviews maps the order's reviewed item IDs to review IDs.
-func (r *Repository) OrderReviews(ctx context.Context, userID, orderID int64) (map[int64]int64, error) {
-	rows, err := r.q.OrderReviews(ctx, dbgen.OrderReviewsParams{OrderID: orderID, UserID: userID})
-	if err != nil {
-		return nil, err
-	}
-	m := make(map[int64]int64, len(rows))
-	for _, row := range rows {
-		m[row.OrderItemID] = row.ID
-	}
-	return m, nil
-}
-
 // Product returns an active product by slug, for its reviews page.
 func (r *Repository) Product(ctx context.Context, slug string) (dbgen.ReviewProductRow, error) {
 	row, err := r.q.ReviewProduct(ctx, slug)
@@ -177,17 +166,22 @@ func (r *Repository) Product(ctx context.Context, slug string) (dbgen.ReviewProd
 	return row, err
 }
 
-func (r *Repository) ProductReviews(ctx context.Context, productID int64, limit, offset int) ([]PublicReview, error) {
-	rows, err := r.q.ProductReviews(ctx, dbgen.ProductReviewsParams{ProductID: &productID, RowLimit: int32(limit), RowOffset: int32(offset)})
-	if err != nil {
-		return nil, err
+// ReviewPage returns one page of a product's visible reviews and the star
+// distribution of all of them (index 0 = 1 star) in one query. ok is false
+// when the page has no row, so the distribution is unknown.
+func (r *Repository) ReviewPage(ctx context.Context, productID int64, limit, offset int) (reviews []PublicReview, dist [5]int, ok bool, err error) {
+	rows, err := r.q.ProductReviewPage(ctx, dbgen.ProductReviewPageParams{ProductID: &productID, RowLimit: int32(limit), RowOffset: int32(offset)})
+	if err != nil || len(rows) == 0 {
+		return nil, dist, false, err
 	}
-	out := make([]PublicReview, len(rows))
+	reviews = make([]PublicReview, len(rows))
 	for i, row := range rows {
-		out[i] = PublicReview{ID: row.ID, Author: MaskName(row.FirstName, row.LastName, row.Email), Rating: int(row.Rating),
+		reviews[i] = PublicReview{ID: row.ID, Author: MaskName(row.FirstName, row.LastName, row.Email), Rating: int(row.Rating),
 			VariantLabel: row.VariantLabel, Comment: row.Comment, CreatedAt: row.CreatedAt}
 	}
-	return out, nil
+	f := rows[0]
+	dist = [5]int{int(f.Stars1), int(f.Stars2), int(f.Stars3), int(f.Stars4), int(f.Stars5)}
+	return reviews, dist, true, nil
 }
 
 // Distribution counts reviews per star value (index 0 = 1 star).
@@ -204,3 +198,72 @@ func (r *Repository) Distribution(ctx context.Context, productID int64) ([5]int,
 	}
 	return d, nil
 }
+
+func adminReview(id int64, rating int16, comment string, created time.Time, edited, hidden *time.Time, productID *int64,
+	product, variant, order, email, first, last string) AdminReview {
+	a := AdminReview{ID: id, ProductName: product, VariantLabel: variant, OrderNumber: order,
+		Author: MaskName(first, last, email), Rating: int(rating), Comment: comment, CreatedAt: created, EditedAt: edited, HiddenAt: hidden}
+	if productID != nil {
+		a.ProductID = *productID
+	}
+	return a
+}
+
+func (r *Repository) AdminList(ctx context.Context, f AdminFilter, limit, offset int) ([]AdminReview, error) {
+	rows, err := r.q.AdminReviews(ctx, dbgen.AdminReviewsParams{Status: f.Status, Rating: int32(f.Rating), Q: database.Like(f.Query),
+		RowLimit: int32(limit), RowOffset: int32(offset)})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]AdminReview, len(rows))
+	for i, row := range rows {
+		out[i] = adminReview(row.ID, row.Rating, row.Comment, row.CreatedAt, row.EditedAt, row.HiddenAt, row.ProductID,
+			row.ProductName, row.VariantLabel, row.OrderNumber, row.Email, row.FirstName, row.LastName)
+		if row.ModerationReason != nil {
+			out[i].Reason = *row.ModerationReason
+		}
+	}
+	return out, nil
+}
+
+func (r *Repository) AdminGet(ctx context.Context, id int64) (AdminReview, error) {
+	row, err := r.q.AdminReview(ctx, id)
+	if database.IsNoRows(err) {
+		return AdminReview{}, ErrNotFound
+	}
+	if err != nil {
+		return AdminReview{}, err
+	}
+	a := adminReview(row.ID, row.Rating, row.Comment, row.CreatedAt, row.EditedAt, row.HiddenAt, row.ProductID,
+		row.ProductName, row.VariantLabel, row.OrderNumber, row.Email, row.FirstName, row.LastName)
+	if row.ModerationReason != nil {
+		a.Reason = *row.ModerationReason
+	}
+	return a, nil
+}
+
+// LockForModeration row-locks a review and returns its product and whether
+// it is hidden.
+func (r *Repository) LockForModeration(ctx context.Context, id int64) (*int64, bool, error) {
+	row, err := r.q.LockReview(ctx, id)
+	if database.IsNoRows(err) {
+		return nil, false, ErrNotFound
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return row.ProductID, row.HiddenAt != nil, nil
+}
+
+func (r *Repository) Hide(ctx context.Context, id, adminID int64, reason string) (bool, error) {
+	n, err := r.q.HideReview(ctx, dbgen.HideReviewParams{ID: id, AdminUserID: &adminID, Reason: &reason})
+	return n == 1, err
+}
+
+func (r *Repository) Unhide(ctx context.Context, id int64) (bool, error) {
+	n, err := r.q.UnhideReview(ctx, id)
+	return n == 1, err
+}
+
+// Queries exposes the transaction's queries (audit entries).
+func (r *Repository) Queries() *dbgen.Queries { return r.q }

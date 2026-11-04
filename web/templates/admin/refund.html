@@ -1,0 +1,76 @@
+{{define "adm-title"}}Refund #{{.Data.Refund.ID}}{{end}}
+{{template "admin" .}}
+{{define "admin-content"}}
+{{$f := .Data.Refund}}
+<section class="adm-section">
+  <a class="adm-back" href="/admin/refunds">{{icon "chevron-left"}} Refund</a>
+  <div class="adm-head">
+    <h1>Refund #{{$f.ID}}</h1>
+    <span class="adm-badge adm-badge--f-{{$f.Status}}">{{$f.Status.Label}}</span>
+  </div>
+  <div class="adm-grid">
+    <div class="adm-col">
+      <div class="card adm-card">
+        <dl class="adm-dl">
+          <div class="adm-dl__total"><dt>Jumlah</dt><dd>{{rupiah $f.Amount}}</dd></div>
+          <div><dt>Sumber</dt><dd>{{$f.Source.Label}}</dd></div>
+          <div><dt>Pesanan</dt><dd><a href="/admin/orders/{{$f.OrderNumber}}">{{$f.OrderNumber}}</a></dd></div>
+          {{with $f.ReturnNumber}}<div><dt>Retur</dt><dd><a href="/admin/returns/{{.}}">{{.}}</a> ({{$f.ReturnStatus.Label}})</dd></div>{{end}}
+          <div><dt>Pembayaran</dt><dd>{{or $f.PaymentProvider "—"}}{{with $f.PaymentType}} · {{.}}{{end}} · dibayar {{rupiah $f.PaidAmount}}</dd></div>
+          <div><dt>Ref. transaksi</dt><dd><code>{{or $f.PaymentOrderID "—"}}</code>{{with $f.PaymentTxID}} · <code>{{.}}</code>{{end}}</dd></div>
+          <div><dt>Dicatat</dt><dd>{{datetime $f.RequestedAt}}</dd></div>
+          {{with $f.ProcessedAt}}<div><dt>Diproses</dt><dd>{{datetime .}}</dd></div>{{end}}
+          {{with $f.Reference}}<div><dt>Referensi refund</dt><dd>{{.}} ({{$f.Provider}})</dd></div>{{end}}
+          {{with $f.Note}}<div><dt>Catatan</dt><dd>{{.}}</dd></div>{{end}}
+          {{with $f.FailureReason}}<div><dt>Alasan gagal</dt><dd>{{.}}</dd></div>{{end}}
+        </dl>
+        <p class="muted">Dana dikembalikan di luar sistem; Ashanum tidak memanggil API refund Midtrans.</p>
+      </div>
+
+      {{if $f.Status.Open}}
+      <div class="card adm-card">
+        <h2 class="adm-h2">Catat hasil refund</h2>
+        {{if eq (print $f.Status) "PENDING"}}
+        <form class="adm-form adm-inline" action="/admin/refunds/{{$f.ID}}/processing" method="post">
+          <button class="btn btn--sm" type="submit">Tandai Sedang Diproses</button>
+        </form>
+        {{end}}
+        <form class="adm-form" action="/admin/refunds/{{$f.ID}}/complete" method="post">
+          <div class="field-row">
+            <div class="field">
+              <label class="field__label" for="method">Cara</label>
+              <select class="select" id="method" name="method"><option value="manual">Transfer manual</option></select>
+            </div>
+            <div class="field">
+              <label class="field__label" for="reference">Referensi transfer</label>
+              <input class="input" id="reference" name="reference" required minlength="3" maxlength="100">
+            </div>
+          </div>
+          <div class="field">
+            <label class="field__label" for="note">Catatan <span class="field__optional">(opsional)</span></label>
+            <textarea class="textarea" id="note" name="note" maxlength="500"></textarea>
+          </div>
+          <button class="btn btn--primary" type="submit">Catat Refund Berhasil</button>
+        </form>
+        <details class="adm-danger-zone">
+          <summary>Refund gagal</summary>
+          <form class="adm-form" action="/admin/refunds/{{$f.ID}}/fail" method="post">
+            <div class="field">
+              <label class="field__label" for="reason">Alasan kegagalan</label>
+              <textarea class="textarea" id="reason" name="reason" required minlength="3" maxlength="500"></textarea>
+            </div>
+            <button class="btn btn--danger" type="submit">Tandai Gagal</button>
+          </form>
+        </details>
+      </div>
+      {{end}}
+    </div>
+    <div class="adm-col">
+      <div class="card adm-card">
+        <h2 class="adm-h2">Jejak admin</h2>
+        {{template "adm-audit" .Data.Audit}}
+      </div>
+    </div>
+  </div>
+</section>
+{{end}}

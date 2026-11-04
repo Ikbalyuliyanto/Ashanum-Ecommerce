@@ -1,0 +1,109 @@
+{{define "adm-title"}}Ubah {{.Data.Product.Name}}{{end}}
+{{template "admin" .}}
+{{define "admin-content"}}
+{{$p := .Data.Product}}{{$e := .Data.Errors}}{{$low := .Data.Threshold}}
+<section class="adm-section">
+  <a class="adm-back" href="/admin/products">{{icon "chevron-left"}} Produk</a>
+  <div class="adm-head">
+    <h1>{{$p.Name}}</h1>
+    {{if $p.Active}}<span class="adm-badge adm-badge--ok">Aktif</span>{{else}}<span class="adm-badge adm-badge--muted">Nonaktif</span>{{end}}
+  </div>
+  <div class="adm-actions">
+    {{if $p.Active}}<a class="btn btn--sm" href="/products/{{$p.Slug}}" target="_blank" rel="noopener">{{icon "external"}} Lihat di toko</a>{{end}}
+    <form action="/admin/products/{{$p.ID}}/{{if $p.Active}}deactivate{{else}}activate{{end}}" method="post">
+      <button class="btn btn--sm{{if $p.Active}} btn--outline{{else}} btn--primary{{end}}" type="submit">{{if $p.Active}}Nonaktifkan{{else}}Aktifkan{{end}}</button>
+    </form>
+  </div>
+  <p class="muted adm-note">Produk tidak dihapus: nonaktifkan agar tidak tampil di toko. Riwayat pesanan, ulasan, dan retur tetap utuh. Terjual {{$p.SoldCount}} · rating {{printf "%.1f" $p.RatingAverage}} ({{$p.RatingCount}} ulasan tampil).</p>
+
+  {{if $e}}<p class="alert alert--error" role="alert">Periksa kembali isian yang ditandai.</p>{{end}}
+  <form class="adm-form card adm-card" action="/admin/products/{{$p.ID}}" method="post">
+    <h2 class="adm-h2">Informasi produk</h2>
+    {{template "adm-product-info" (dict "Info" .Data.Info "Categories" .Data.Categories "Errors" $e "Images" .Data.Images)}}
+    <div class="form-actions"><button class="btn btn--primary" type="submit">Simpan Informasi</button></div>
+  </form>
+
+  <div class="card adm-card" id="varian">
+    <h2 class="adm-h2">Varian ({{len $p.Variants}})</h2>
+    <p class="muted">Harga dan SKU diubah di sini. Stok hanya berubah lewat <strong>Atur Stok</strong> (tercatat di jejak stok).</p>
+    <div class="adm-variants">
+    {{range $p.Variants}}
+      <form class="adm-variant{{if not .Active}} is-off{{end}}" action="/admin/products/{{$p.ID}}/variants/{{.ID}}" method="post">
+        <div class="adm-variant__head">
+          <strong>{{or .Label "Tanpa pilihan"}}</strong>
+          <span class="{{if eq .Stock 0}}adm-badge adm-badge--danger{{else if le .Stock $low}}adm-badge adm-badge--warn{{else}}adm-badge{{end}}">Stok {{.Stock}}</span>
+        </div>
+        <div class="adm-variant__fields">
+          <label>SKU <input class="input" name="sku" value="{{.SKU}}" required maxlength="64"></label>
+          <label>Harga (Rp) <input class="input" name="price" value="{{.Price}}" inputmode="numeric" required></label>
+          <label>Harga coret <input class="input" name="original_price" value="{{if .OriginalPrice}}{{.OriginalPrice}}{{end}}" inputmode="numeric" placeholder="—"></label>
+          <label class="check"><input type="checkbox" name="active" value="1"{{if .Active}} checked{{end}}> Dijual</label>
+        </div>
+        <div class="adm-variant__actions">
+          <button class="btn btn--sm btn--primary" type="submit">Simpan</button>
+          <a class="btn btn--sm" href="/admin/stock/{{.ID}}?return_to=/admin/products/{{$p.ID}}/edit">Atur Stok</a>
+        </div>
+      </form>
+    {{end}}
+    </div>
+
+    <details class="adm-more">
+      <summary>{{icon "plus"}} Tambah varian</summary>
+      <form class="adm-form" action="/admin/products/{{$p.ID}}/variants" method="post">
+        {{if $p.Attributes}}
+        <div class="field-row">
+          {{range $p.Attributes}}
+          <div class="field">
+            <label class="field__label" for="opt-{{.ID}}">{{.Name}}</label>
+            <input class="input" id="opt-{{.ID}}" name="opt:{{.Name}}" list="vals-{{.ID}}" required maxlength="40" placeholder="Pilih atau ketik nilai baru">
+            <datalist id="vals-{{.ID}}">{{range .Values}}<option value="{{.Value}}">{{end}}</datalist>
+          </div>
+          {{end}}
+        </div>
+        {{else}}
+        <p class="muted">Produk ini belum punya atribut. Tambahkan atribut (mis. Warna) dulu agar bisa punya lebih dari satu varian.</p>
+        {{end}}
+        <div class="field-row">
+          <div class="field"><label class="field__label" for="nv-sku">SKU</label><input class="input" id="nv-sku" name="sku" required maxlength="64"></div>
+          <div class="field"><label class="field__label" for="nv-price">Harga (Rp)</label><input class="input" id="nv-price" name="price" inputmode="numeric" required></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label class="field__label" for="nv-orig">Harga coret <span class="field__optional">(opsional)</span></label><input class="input" id="nv-orig" name="original_price" inputmode="numeric"></div>
+          <div class="field"><label class="field__label" for="nv-stock">Stok awal</label><input class="input" id="nv-stock" name="stock" inputmode="numeric" value="0" required></div>
+        </div>
+        <button class="btn btn--primary btn--sm" type="submit">Tambah Varian</button>
+      </form>
+    </details>
+
+    {{if lt (len $p.Attributes) 3}}
+    <details class="adm-more">
+      <summary>{{icon "plus"}} Tambah atribut</summary>
+      <form class="adm-form" action="/admin/products/{{$p.ID}}/attributes" method="post">
+        <p class="muted">Atribut baru diberikan ke semua varian yang sudah ada dengan nilai di bawah, lalu bisa dipakai untuk varian baru.</p>
+        <div class="field-row">
+          <div class="field"><label class="field__label" for="at-name">Nama atribut</label><input class="input" id="at-name" name="name" required maxlength="30" placeholder="mis. Bahan"></div>
+          <div class="field"><label class="field__label" for="at-value">Nilai untuk varian yang ada</label><input class="input" id="at-value" name="value" required maxlength="40" placeholder="mis. Katun"></div>
+        </div>
+        <button class="btn btn--sm" type="submit">Tambah Atribut</button>
+      </form>
+    </details>
+    {{end}}
+  </div>
+
+  <div class="card adm-card">
+    <h2 class="adm-h2">Jejak stok terbaru</h2>
+    {{if .Data.History}}
+    <div class="adm-table-wrap">
+    <table class="adm-table">
+      <thead><tr><th>Waktu</th><th>SKU</th><th>Jenis</th><th class="num">Perubahan</th><th class="num">Stok</th><th>Alasan</th></tr></thead>
+      <tbody>{{range .Data.History}}
+        <tr><td data-label="Waktu">{{datetime .At}}</td><td data-label="SKU">{{.SKU}}</td><td data-label="Jenis">{{.Type.Label}}</td>
+            <td data-label="Perubahan" class="num">{{if gt .Delta 0}}+{{end}}{{.Delta}}</td><td data-label="Stok" class="num">{{.Before}} → {{.After}}</td>
+            <td data-label="Alasan">{{.Reason}}{{with .AdminEmail}} <span class="muted">· {{.}}</span>{{end}}</td></tr>
+      {{end}}</tbody>
+    </table>
+    </div>
+    {{else}}<p class="muted">Belum ada perubahan stok.</p>{{end}}
+  </div>
+</section>
+{{end}}

@@ -31,10 +31,11 @@ type Config struct {
 	// https://ashanum.example; payment providers redirect buyers back to it.
 	BaseURL string
 
-	Database Database
-	Session  Session
-	Midtrans Midtrans
-	Returns  Returns
+	Database  Database
+	Session   Session
+	Midtrans  Midtrans
+	Returns   Returns
+	Inventory Inventory
 }
 
 type Database struct {
@@ -72,6 +73,13 @@ type Returns struct {
 	WindowDays int
 }
 
+// Inventory holds stock reporting settings. LowStockThreshold marks a
+// variant as "stok rendah" on the admin dashboard and reports (1..N units
+// left); it triggers no notification or worker.
+type Inventory struct {
+	LowStockThreshold int
+}
+
 // minSessionSecret is the minimum SESSION_SECRET length (bytes).
 const minSessionSecret = 32
 
@@ -96,7 +104,8 @@ func Load() (*Config, error) {
 			Env:       getString("MIDTRANS_ENV", MidtransSandbox),
 			ServerKey: getString("MIDTRANS_SERVER_KEY", ""),
 		},
-		Returns: Returns{WindowDays: getInt("RETURN_WINDOW_DAYS", 7, &errs)},
+		Returns:   Returns{WindowDays: getInt("RETURN_WINDOW_DAYS", 7, &errs)},
+		Inventory: Inventory{LowStockThreshold: getInt("LOW_STOCK_THRESHOLD", 5, &errs)},
 		Database: Database{
 			URL:      getString("DATABASE_URL", ""),
 			MaxConns: int32(getInt("DB_MAX_CONNS", 10, &errs)),
@@ -123,6 +132,9 @@ func Load() (*Config, error) {
 	errs = append(errs, cfg.validatePayments()...)
 	if d := cfg.Returns.WindowDays; d < 1 || d > 365 {
 		errs = append(errs, fmt.Errorf("RETURN_WINDOW_DAYS must be between 1 and 365, got %d", d))
+	}
+	if n := cfg.Inventory.LowStockThreshold; n < 0 || n > 10000 {
+		errs = append(errs, fmt.Errorf("LOW_STOCK_THRESHOLD must be between 0 and 10000, got %d", n))
 	}
 
 	switch secret := getString("SESSION_SECRET", ""); {

@@ -1,0 +1,40 @@
+{{define "adm-title"}}Refund{{end}}
+{{template "admin" .}}
+{{define "admin-content"}}
+{{$p := .Data.Page}}{{$pg := .Data.Pager}}{{$tab := .Data.Tab}}
+<section id="list-area" class="adm-section" hx-target="#list-area" hx-select="#list-area" hx-swap="outerHTML">
+  <a class="adm-back" href="/admin/returns">{{icon "chevron-left"}} Retur</a>
+  <div class="adm-head"><h1>Refund</h1></div>
+  <p class="muted adm-note">Refund dicatat di sini dan dibayarkan di luar sistem (transfer manual). Tidak ada API refund Midtrans yang dipanggil.</p>
+  <nav class="adm-tabs" hx-boost="true" aria-label="Status refund">
+    {{range .Data.Tabs}}<a href="{{$pg.With "status" .Key}}"{{if eq .Key $tab.Key}} aria-current="page"{{end}}>{{.Label}}</a>{{end}}
+  </nav>
+  <form class="adm-filter" hx-boost="true" action="/admin/refunds" method="get" role="search">
+    {{with $tab.Key}}<input type="hidden" name="status" value="{{.}}">{{end}}
+    <label class="visually-hidden" for="q">Cari nomor pesanan atau retur</label>
+    <input class="input" id="q" type="search" name="q" value="{{$p.Filter.Query}}" placeholder="Cari ASH-… atau RET-…" maxlength="100">
+    <button class="btn btn--sm" type="submit">{{icon "search"}} Cari</button>
+  </form>
+  {{if $p.Refunds}}
+  <div class="adm-table-wrap">
+  <table class="adm-table">
+    <thead><tr><th>Refund</th><th>Sumber</th><th>Pesanan / Retur</th><th class="num">Jumlah</th><th>Referensi pembayaran</th><th>Status</th><th>Dicatat</th></tr></thead>
+    <tbody>
+    {{range $p.Refunds}}
+      <tr>
+        <td data-label="Refund"><a class="adm-strong" href="/admin/refunds/{{.ID}}" hx-boost="false">#{{.ID}}</a></td>
+        <td data-label="Sumber">{{.Source.Label}}</td>
+        <td data-label="Pesanan / Retur">{{.OrderNumber}}{{with .ReturnNumber}}<br><span class="muted">{{.}}</span>{{end}}</td>
+        <td data-label="Jumlah" class="num">{{rupiah .Amount}}</td>
+        <td data-label="Referensi"><code>{{or .PaymentOrderID "—"}}</code></td>
+        <td data-label="Status"><span class="adm-badge adm-badge--f-{{.Status}}">{{.Status.Label}}</span></td>
+        <td data-label="Dicatat">{{datetime .RequestedAt}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+  {{template "adm-pager" $pg}}
+  {{else}}<p class="adm-empty">Tidak ada refund.</p>{{end}}
+</section>
+{{end}}

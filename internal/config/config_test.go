@@ -174,3 +174,24 @@ func TestReturnWindowConfig(t *testing.T) {
 		}
 	}
 }
+
+func TestLowStockConfig(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("DATABASE_URL", "postgres://u:p@db:5432/shop")
+	t.Setenv("LOW_STOCK_THRESHOLD", "")
+	cfg, err := Load()
+	if err != nil || cfg.Inventory.LowStockThreshold != 5 {
+		t.Fatalf("default LOW_STOCK_THRESHOLD: %v %+v", err, cfg)
+	}
+	t.Setenv("LOW_STOCK_THRESHOLD", "12")
+	if cfg, err := Load(); err != nil || cfg.Inventory.LowStockThreshold != 12 {
+		t.Fatalf("LOW_STOCK_THRESHOLD=12: %v", err)
+	}
+	for _, bad := range []string{"-1", "10001", "lima"} {
+		t.Setenv("LOW_STOCK_THRESHOLD", bad)
+		if _, err := Load(); err == nil {
+			t.Errorf("LOW_STOCK_THRESHOLD=%s accepted", bad)
+		}
+	}
+}

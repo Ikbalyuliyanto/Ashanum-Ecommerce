@@ -2,17 +2,22 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
+	"ecommerce/internal/audit"
 	"ecommerce/internal/database"
 	"ecommerce/internal/database/dbgen"
 )
 
 type Repository struct {
-	q *dbgen.Queries
+	db dbgen.DBTX
+	q  *dbgen.Queries
 }
 
-func NewRepository(db dbgen.DBTX) *Repository { return &Repository{q: dbgen.New(db)} }
+func NewRepository(db dbgen.DBTX) *Repository { return &Repository{db: db, q: dbgen.New(db)} }
 
 func (r *Repository) CreateUser(ctx context.Context, email, passwordHash string) (User, error) {
 	row, err := r.q.CreateUser(ctx, dbgen.CreateUserParams{Email: email, PasswordHash: passwordHash})
@@ -64,4 +69,52 @@ func (r *Repository) DeleteSession(ctx context.Context, tokenHash []byte) error 
 func (r *Repository) DeleteExpiredSessions(ctx context.Context) error {
 	_, err := r.q.DeleteExpiredSessions(ctx)
 	return err
+}
+
+// CreateAdmin inserts an admin (hash set) or, with promote, makes the
+// existing account of email ADMIN — in one transaction with its profile
+// name and the audit entry.
+func (r *Repository) CreateAdmin(ctx context.Context, email, hash, first, last string, promote bool) (AdminResult, error) {
+	b, ok := r.db.(interface {
+		Begin(context.Context) (pgx.Tx, error)
+	})
+	if !ok {
+		return AdminResult{}, errors.New("auth: CreateAdmin needs a connection pool")
+	}
+	var res AdminResult
+	err := pgx.BeginFunc(ctx, b, func(tx pgx.Tx) error {
+		q := r.q.WithTx(tx)
+		row, err := q.UserByEmail(ctx, email)
+		switch {
+		case database.IsNoRows(err) && promote:
+			return ErrUnknownEmail
+		case database.IsNoRows(err):
+			created, err := q.CreateAdminUser(ctx, dbgen.CreateAdminUserParams{Email: email, PasswordHash: hash})
+			if database.IsUniqueViolation(err, "users_email_key") {
+				return ErrEmailTaken
+			}
+			if err != nil {
+				return err
+			}
+			res = AdminResult{User: User{ID: created.ID, Email: created.Email, Role: Role(created.Role), CreatedAt: created.CreatedAt}, Created: true}
+			if err := q.SetProfileName(ctx, dbgen.SetProfileNameParams{UserID: created.ID, FirstName: first, LastName: last}); err != nil {
+				return err
+			}
+			return audit.Record(ctx, q, audit.Entry{AdminID: created.ID, Action: "user.create_admin", EntityType: audit.EntityUser,
+				EntityID: created.ID, Label: created.Email, Meta: map[string]any{"via": "cli"}})
+		case err != nil:
+			return err
+		case !promote:
+			return ErrEmailTaken
+		}
+		res = AdminResult{User: User{ID: row.ID, Email: row.Email, Role: RoleAdmin, CreatedAt: row.CreatedAt}}
+		n, err := q.PromoteToAdmin(ctx, row.ID)
+		if err != nil || n == 0 {
+			return err // n == 0: already an admin, nothing to do
+		}
+		res.Promoted = true
+		return audit.Record(ctx, q, audit.Entry{AdminID: row.ID, Action: "user.grant_admin", EntityType: audit.EntityUser,
+			EntityID: row.ID, Label: row.Email, Meta: map[string]any{"via": "cli", "from": row.Role}})
+	})
+	return res, err
 }

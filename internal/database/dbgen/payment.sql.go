@@ -593,27 +593,49 @@ WITH items AS (
     UPDATE product_variants v SET stock = v.stock + i.quantity
     FROM items i
     WHERE v.id = i.variant_id
-    RETURNING v.id
+    RETURNING v.id, v.sku, v.stock, i.quantity
+), logged AS (
+    INSERT INTO inventory_adjustments (variant_id, sku, type, quantity_delta, stock_before, stock_after,
+                                       reason, reference_type, reference_id, admin_user_id)
+    SELECT r.id, r.sku, 'ORDER_RESTORE', r.quantity, r.stock - r.quantity, r.stock,
+           $2::text, 'ORDER', $1, $3::bigint
+    FROM restored r
+    RETURNING id
 )
 SELECT (SELECT count(*) FROM items)::int    AS variants,
        (SELECT count(*) FROM restored)::int AS restored,
+       (SELECT count(*) FROM logged)::int   AS logged,
        (SELECT count(*) FROM order_items oi
         WHERE oi.order_id = $1 AND oi.variant_id IS NULL)::int AS missing
 `
 
+type RestoreOrderStockParams struct {
+	OrderID     int64
+	Reason      string
+	AdminUserID *int64
+}
+
 type RestoreOrderStockRow struct {
 	Variants int32
 	Restored int32
+	Logged   int32
 	Missing  int32
 }
 
 // RestoreOrderStock gives the order's quantities back to their variants
-// (call LockOrderVariants first). Lines whose variant was deleted have no
-// stock to return; they are counted as missing.
-func (q *Queries) RestoreOrderStock(ctx context.Context, orderID int64) (RestoreOrderStockRow, error) {
-	row := q.db.QueryRow(ctx, restoreOrderStock, orderID)
+// (call LockOrderVariants first) and records each change as an
+// ORDER_RESTORE inventory adjustment. Lines whose variant was deleted have
+// no stock to return; they are counted as missing. admin_user_id is set
+// when an admin cancelled the order.
+func (q *Queries) RestoreOrderStock(ctx context.Context, arg RestoreOrderStockParams) (RestoreOrderStockRow, error) {
+	row := q.db.QueryRow(ctx, restoreOrderStock, arg.OrderID, arg.Reason, arg.AdminUserID)
 	var i RestoreOrderStockRow
-	err := row.Scan(&i.Variants, &i.Restored, &i.Missing)
+	err := row.Scan(
+		&i.Variants,
+		&i.Restored,
+		&i.Logged,
+		&i.Missing,
+	)
 	return i, err
 }
 

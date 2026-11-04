@@ -2,8 +2,11 @@ package review
 
 import (
 	"context"
+	"fmt"
 	"strconv"
+	"strings"
 
+	"ecommerce/internal/audit"
 	"ecommerce/internal/validate"
 )
 
@@ -142,33 +145,126 @@ func (s *Service) History(ctx context.Context, userID int64, tab string, page in
 	return h, nil
 }
 
-// ReviewedItems maps the order's reviewed item IDs to their review IDs.
-func (s *Service) ReviewedItems(ctx context.Context, userID, orderID int64) (map[int64]int64, error) {
-	return s.repo.OrderReviews(ctx, userID, orderID)
-}
-
-// ProductPage returns one page (1-based) of a product's reviews with the
-// rating summary. The summary uses the cached aggregate on products.
+// ProductPage returns one page (1-based) of a product's visible reviews
+// with the rating summary. The average and count come from the cached
+// aggregate on products (no query when there are no reviews); the page and
+// the star distribution come from one query.
 func (s *Service) ProductPage(ctx context.Context, productID int64, average float64, count int, page int) (ProductPage, error) {
 	page = min(max(page, 1), 500)
 	p := ProductPage{ProductID: productID, Page: page, Summary: Summary{Average: average, Count: count}}
 	if count == 0 {
 		return p, nil
 	}
-	dist, err := s.repo.Distribution(ctx, productID)
+	reviews, dist, ok, err := s.repo.ReviewPage(ctx, productID, ProductPageSize+1, (page-1)*ProductPageSize)
 	if err != nil {
 		return p, err
+	}
+	if !ok { // past the last page: the distribution needs its own query
+		if dist, err = s.repo.Distribution(ctx, productID); err != nil {
+			return p, err
+		}
 	}
 	for stars := 5; stars >= 1; stars-- {
 		p.Summary.Bars = append(p.Summary.Bars, Bar{Stars: stars, Count: dist[stars-1]})
 	}
-	if p.Reviews, err = s.repo.ProductReviews(ctx, productID, ProductPageSize+1, (page-1)*ProductPageSize); err != nil {
-		return p, err
-	}
-	if len(p.Reviews) > ProductPageSize {
+	if p.Reviews = reviews; len(p.Reviews) > ProductPageSize {
 		p.Reviews, p.HasNext = p.Reviews[:ProductPageSize], true
 	}
 	return p, nil
+}
+
+// AdminList returns one page of every review for moderation, newest first.
+func (s *Service) AdminList(ctx context.Context, f AdminFilter) (AdminPage, error) {
+	f.Page = min(max(f.Page, 1), 1000)
+	if f.PageSize <= 0 {
+		f.PageSize = AdminPageSize
+	}
+	f.PageSize = min(f.PageSize, MaxAdminPageSize)
+	if f.Status != "visible" && f.Status != "hidden" {
+		f.Status = ""
+	}
+	if f.Rating < 0 || f.Rating > 5 {
+		f.Rating = 0
+	}
+	f.Query = validate.SearchText(f.Query)
+	rows, err := s.repo.AdminList(ctx, f, f.PageSize+1, (f.Page-1)*f.PageSize)
+	if err != nil {
+		return AdminPage{}, err
+	}
+	p := AdminPage{Filter: f}
+	if len(rows) > f.PageSize {
+		rows, p.HasNext = rows[:f.PageSize], true
+	}
+	p.Reviews = rows
+	return p, nil
+}
+
+// AdminGet returns one review for moderation.
+func (s *Service) AdminGet(ctx context.Context, id int64) (AdminReview, error) {
+	return s.repo.AdminGet(ctx, id)
+}
+
+// Hide takes a review out of public view on an admin's decision (reason
+// required) and recalculates the product rating without it, in one
+// transaction: lock review → lock product → hide → recalculate → audit.
+func (s *Service) Hide(ctx context.Context, adminID, id int64, reason string) error {
+	reason = strings.TrimSpace(reason)
+	e := validate.Errors{}
+	validate.Length(e, "reason", reason, "Alasan moderasi", 3, 500)
+	if reason == "" {
+		e = validate.Errors{"reason": "Alasan menyembunyikan ulasan wajib diisi."}
+	}
+	if err := e.Err(); err != nil {
+		return err
+	}
+	return s.moderate(ctx, adminID, id, true, reason)
+}
+
+// Unhide shows a hidden review again and recalculates the product rating
+// with it.
+func (s *Service) Unhide(ctx context.Context, adminID, id int64) error {
+	return s.moderate(ctx, adminID, id, false, "")
+}
+
+func (s *Service) moderate(ctx context.Context, adminID, id int64, hide bool, reason string) error {
+	return s.repo.InTx(ctx, func(tx *Repository) error {
+		productID, hidden, err := tx.LockForModeration(ctx, id)
+		if err != nil {
+			return err
+		}
+		if hidden == hide {
+			return ErrModerated
+		}
+		if err := tx.LockProduct(ctx, productID); err != nil {
+			return err
+		}
+		var ok bool
+		action := "review.unhide"
+		if hide {
+			ok, err = tx.Hide(ctx, id, adminID, reason)
+			action = "review.hide"
+		} else {
+			ok, err = tx.Unhide(ctx, id)
+		}
+		if err == nil && !ok {
+			err = ErrModerated
+		}
+		if err != nil {
+			return err
+		}
+		if err := recalculate(ctx, tx, productID); err != nil {
+			return err
+		}
+		meta := map[string]any{}
+		if reason != "" {
+			meta["reason"] = reason
+		}
+		if productID != nil {
+			meta["product_id"] = *productID
+		}
+		return audit.Record(ctx, tx.Queries(), audit.Entry{AdminID: adminID, Action: action, EntityType: audit.EntityReview,
+			EntityID: id, Label: fmt.Sprintf("Ulasan #%d", id), Meta: meta})
+	})
 }
 
 // ProductPageBySlug is ProductPage for the reviews page of an active product.

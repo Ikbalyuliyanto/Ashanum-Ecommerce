@@ -1,0 +1,257 @@
+{{define "adm-title"}}Retur {{.Data.Return.Number}}{{end}}
+{{template "admin" .}}
+{{define "admin-content"}}
+{{$r := .Data.Return}}{{$st := print $r.Status}}{{$refund := eq (print $r.Type) "REFUND"}}
+<section class="adm-section">
+  <a class="adm-back" href="/admin/returns">{{icon "chevron-left"}} Retur &amp; Refund</a>
+  <div class="adm-head">
+    <h1>{{$r.Number}}</h1>
+    <span class="adm-badge adm-badge--r-{{$r.Status}}">{{$r.Status.Label}}</span>
+  </div>
+  <p class="muted adm-note">{{$r.Type.Label}} · pesanan <a href="/admin/orders/{{$r.OrderNumber}}">{{$r.OrderNumber}}</a> · diajukan {{datetime $r.RequestedAt}} oleh {{with $r.BuyerName}}{{.}} · {{end}}{{$r.BuyerEmail}}</p>
+
+  <div class="adm-grid">
+    <div class="adm-col">
+      <div class="card adm-card">
+        <h2 class="adm-h2">Langkah berikutnya</h2>
+
+        {{if eq $st "REQUESTED"}}
+        <form class="adm-form" action="/admin/returns/{{$r.Number}}/approve" method="post"
+              hx-get="/admin/returns/{{$r.Number}}/estimate" hx-trigger="change" hx-target="#approve-estimate" hx-swap="outerHTML">
+          <h3 class="adm-h3">Setujui (boleh sebagian)</h3>
+          <p class="muted">Pilih jumlah yang disetujui per barang (0 = tidak disetujui). Nilai refund dihitung dari jumlah disetujui × harga yang dibayar.</p>
+          <ul class="adm-lines">
+            {{range $r.Items}}
+            <li>
+              <div><strong>{{.ProductName}}</strong><span class="muted">{{with .VariantLabel}}{{.}} · {{end}}{{rupiah .UnitPrice}} · diminta {{.Quantity}}</span></div>
+              <label class="adm-qty">Disetujui
+                <select class="select" name="qty_{{.ID}}">{{$q := .Quantity}}{{range .ApprovedOptions}}<option value="{{.}}"{{if eq . $q}} selected{{end}}>{{.}}</option>{{end}}</select>
+              </label>
+            </li>
+            {{end}}
+          </ul>
+          {{template "approve-estimate" .Data.Estimate}}
+          <div class="field">
+            <label class="field__label" for="approve-note">Catatan untuk pembeli <span class="field__optional">(opsional)</span></label>
+            <textarea class="textarea" id="approve-note" name="note" maxlength="500"></textarea>
+          </div>
+          <button class="btn btn--primary" type="submit">Setujui</button>
+        </form>
+        <details class="adm-danger-zone">
+          <summary>Tolak pengajuan</summary>
+          <form class="adm-form" action="/admin/returns/{{$r.Number}}/reject" method="post">
+            <div class="field">
+              <label class="field__label" for="reject-note">Alasan penolakan (ditampilkan ke pembeli)</label>
+              <textarea class="textarea" id="reject-note" name="note" required minlength="3" maxlength="500"></textarea>
+            </div>
+            <button class="btn btn--danger" type="submit">Tolak</button>
+          </form>
+        </details>
+        {{end}}
+
+        {{if eq $st "APPROVED"}}
+        <form class="adm-form" action="/admin/returns/{{$r.Number}}/waiting-return" method="post">
+          <p>Minta pembeli mengirim barang yang disetujui ({{$r.ApprovedQuantity}} barang).</p>
+          <div class="field">
+            <label class="field__label" for="wait-note">Instruksi pengiriman untuk pembeli <span class="field__optional">(opsional)</span></label>
+            <textarea class="textarea" id="wait-note" name="note" maxlength="500" placeholder="Alamat retur, kurir, batas waktu"></textarea>
+          </div>
+          <button class="btn btn--primary" type="submit">{{icon "truck"}} Menunggu Barang Dikirim</button>
+        </form>
+        {{end}}
+
+        {{if eq $st "WAITING_RETURN"}}
+        <form class="adm-form" action="/admin/returns/{{$r.Number}}/received" method="post">
+          <h3 class="adm-h3">Terima &amp; periksa barang</h3>
+          <p class="muted">Tentukan kondisi tiap barang. Menerima barang <strong>tidak</strong> menambah stok; barang rusak tidak akan kembali dijual.</p>
+          <ul class="adm-lines">
+            {{range $r.Items}}{{if gt .ApprovedQuantity 0}}
+            <li>
+              <div><strong>{{.ProductName}}</strong><span class="muted">{{with .VariantLabel}}{{.}} · {{end}}{{.ApprovedQuantity}} barang</span></div>
+              <label class="adm-qty">Kondisi
+                <select class="select" name="condition_{{.ID}}" required>
+                  <option value="">Pilih</option>
+                  <option value="RESTOCKABLE">Layak jual kembali</option>
+                  <option value="DAMAGED">Rusak</option>
+                  <option value="NON_RESTOCKABLE">Tidak layak jual</option>
+                </select>
+              </label>
+            </li>
+            {{end}}{{end}}
+          </ul>
+          <div class="field">
+            <label class="field__label" for="recv-note">Catatan pemeriksaan <span class="field__optional">(opsional)</span></label>
+            <textarea class="textarea" id="recv-note" name="note" maxlength="500"></textarea>
+          </div>
+          <button class="btn btn--primary" type="submit">{{icon "check-circle"}} Barang Diterima</button>
+        </form>
+        {{end}}
+
+        {{if $r.CanRestock}}
+        <form class="adm-form adm-inline" action="/admin/returns/{{$r.Number}}/restock" method="post">
+          <p>Ada barang <strong>layak jual</strong> yang belum dikembalikan ke stok.</p>
+          <button class="btn btn--outline" type="submit">{{icon "package"}} Kembalikan ke Stok</button>
+        </form>
+        {{end}}
+
+        {{if $r.CanPrepareRefund}}
+        <form class="adm-form adm-inline" action="/admin/returns/{{$r.Number}}/prepare-refund" method="post">
+          <p>Catat refund <strong>{{rupiah $r.RefundAmount}}</strong> untuk diproses. Tidak ada dana yang dikirim otomatis (tanpa API refund Midtrans).</p>
+          <button class="btn btn--primary" type="submit">{{icon "wallet"}} Siapkan Refund</button>
+        </form>
+        {{end}}
+
+        {{with $r.OpenRefund}}
+        <div class="adm-refund-box">
+          <h3 class="adm-h3">Refund #{{.ID}} · {{rupiah .Amount}} · <span class="adm-badge">{{.Status.Label}}</span></h3>
+          <p class="muted">Transfer dana ke pembeli di luar sistem, lalu catat hasilnya di sini.</p>
+          {{if eq (print .Status) "PENDING"}}
+          <form class="adm-inline" action="/admin/refunds/{{.ID}}/processing" method="post">
+            <input type="hidden" name="return_to" value="/admin/returns/{{$r.Number}}">
+            <button class="btn btn--sm" type="submit">Tandai Sedang Diproses</button>
+          </form>
+          {{end}}
+          <form class="adm-form" action="/admin/returns/{{$r.Number}}/complete-refund" method="post">
+            <div class="field-row">
+              <div class="field">
+                <label class="field__label" for="rf-method">Cara</label>
+                <select class="select" id="rf-method" name="method"><option value="manual">Transfer manual</option></select>
+              </div>
+              <div class="field">
+                <label class="field__label" for="rf-ref">Referensi transfer</label>
+                <input class="input" id="rf-ref" name="reference" required minlength="3" maxlength="100" placeholder="No. referensi bank">
+              </div>
+            </div>
+            <div class="field">
+              <label class="field__label" for="rf-note">Catatan <span class="field__optional">(opsional)</span></label>
+              <textarea class="textarea" id="rf-note" name="note" maxlength="500"></textarea>
+            </div>
+            <button class="btn btn--primary" type="submit">Catat Refund Berhasil</button>
+          </form>
+          <details class="adm-danger-zone">
+            <summary>Refund gagal</summary>
+            <form class="adm-form" action="/admin/refunds/{{.ID}}/fail" method="post">
+              <input type="hidden" name="return_to" value="/admin/returns/{{$r.Number}}">
+              <div class="field">
+                <label class="field__label" for="rf-fail">Alasan kegagalan</label>
+                <textarea class="textarea" id="rf-fail" name="reason" required minlength="3" maxlength="500"></textarea>
+              </div>
+              <button class="btn btn--danger" type="submit">Tandai Gagal</button>
+            </form>
+          </details>
+        </div>
+        {{end}}
+
+        {{if and (eq $st "ITEM_RECEIVED") (not $refund)}}
+        <form class="adm-form" action="/admin/returns/{{$r.Number}}/complete-exchange" method="post">
+          <h3 class="adm-h3">Kirim barang pengganti</h3>
+          <p class="muted">Pilih varian pengganti. Stok varian pengganti dikurangi saat disimpan; jika stok tidak cukup, langkah ini ditolak.</p>
+          <ul class="adm-lines">
+            {{range $it := $r.Items}}{{if gt $it.ApprovedQuantity 0}}
+            <li>
+              <div><strong>{{$it.ProductName}}</strong><span class="muted">{{with $it.VariantLabel}}{{.}} · {{end}}{{$it.ApprovedQuantity}} barang</span></div>
+              <label class="adm-qty">Pengganti
+                <select class="select" name="replacement_{{$it.ID}}" required>
+                  <option value="">Pilih varian</option>
+                  {{range $r.ReplacementsFor $it}}<option value="{{.VariantID}}"{{if eq .VariantID $it.VariantID}} selected{{end}}>{{or .VariantLabel .SKU}} · stok {{.Stock}}</option>{{end}}
+                </select>
+              </label>
+            </li>
+            {{end}}{{end}}
+          </ul>
+          <div class="field">
+            <label class="field__label" for="ex-note">Catatan untuk pembeli <span class="field__optional">(opsional, mis. resi)</span></label>
+            <textarea class="textarea" id="ex-note" name="note" maxlength="500"></textarea>
+          </div>
+          <button class="btn btn--primary" type="submit">{{icon "truck"}} Kirim Barang Pengganti</button>
+        </form>
+        {{end}}
+
+        {{if or (eq $st "REFUNDED") (eq $st "EXCHANGED")}}
+        <form class="adm-form adm-inline" action="/admin/returns/{{$r.Number}}/complete" method="post">
+          <p>{{if eq $st "REFUNDED"}}Dana sudah dikembalikan.{{else}}Barang pengganti sudah dikirim.{{end}} Tutup pengajuan ini.</p>
+          <button class="btn btn--primary" type="submit">Selesaikan Pengembalian</button>
+        </form>
+        {{end}}
+
+        {{if or (eq $st "APPROVED") (eq $st "WAITING_RETURN")}}
+        <details class="adm-danger-zone">
+          <summary>Batalkan pengembalian</summary>
+          <form class="adm-form" action="/admin/returns/{{$r.Number}}/cancel" method="post">
+            <div class="field">
+              <label class="field__label" for="rc-note">Alasan (ditampilkan ke pembeli)</label>
+              <textarea class="textarea" id="rc-note" name="note" required minlength="3" maxlength="500"></textarea>
+            </div>
+            <button class="btn btn--danger" type="submit">Batalkan</button>
+          </form>
+        </details>
+        {{end}}
+
+        {{if or (eq $st "COMPLETED") (eq $st "REJECTED") (eq $st "CANCELLED")}}
+        <p>Pengajuan sudah ditutup{{with $r.ResolutionNote}}: “{{.}}”{{end}}.</p>
+        {{end}}
+      </div>
+
+      <div class="card adm-card">
+        <h2 class="adm-h2">Barang</h2>
+        <ul class="adm-lines">
+          {{range $r.Items}}
+          <li>
+            {{if .ImageURL}}<img src="{{img .ImageURL 96}}" alt="" width="48" height="48" loading="lazy">{{end}}
+            <div>
+              <strong>{{.ProductName}}</strong>
+              <span class="muted">{{with .VariantLabel}}{{.}} · {{end}}SKU {{.SKU}} · {{rupiah .UnitPrice}}</span>
+              <span>Diminta {{.Quantity}}{{with .Approved}} · disetujui {{.}}{{end}}{{if .Partial}} <span class="adm-badge adm-badge--warn">sebagian</span>{{end}}</span>
+              {{with .Condition}}<span>Kondisi: <strong>{{.Label}}</strong></span>{{end}}
+              {{if .RestockedAt}}<span class="adm-badge adm-badge--ok">{{.Restocked}} dikembalikan ke stok</span>{{end}}
+              {{if .ReplacementQty}}<span>Pengganti: {{.ReplacementLabel}} ({{.ReplacementSKU}}) × {{.ReplacementQty}}</span>{{end}}
+            </div>
+            <span class="num">{{rupiah .ApprovedSubtotal}}</span>
+          </li>
+          {{end}}
+        </ul>
+        <dl class="adm-dl">
+          <div><dt>Alasan</dt><dd>{{$r.Reason.Label}}</dd></div>
+          {{with $r.Description}}<div><dt>Deskripsi pembeli</dt><dd>{{.}}</dd></div>{{end}}
+          {{if $refund}}<div class="adm-dl__total"><dt>Nilai refund</dt><dd>{{rupiah $r.RefundAmount}}</dd></div>{{end}}
+        </dl>
+        {{if $r.Evidence}}
+        <h3 class="adm-h3">Bukti</h3>
+        <ul class="evidence-list">{{range $r.Evidence}}<li><a href="{{.URL}}" target="_blank" rel="noopener noreferrer nofollow">{{.URL}}</a></li>{{end}}</ul>
+        {{end}}
+      </div>
+    </div>
+
+    <div class="adm-col">
+      {{if $r.Refunds}}
+      <div class="card adm-card">
+        <h2 class="adm-h2">Refund</h2>
+        <ul class="adm-list">
+          {{range $r.Refunds}}<li><a href="/admin/refunds/{{.ID}}">#{{.ID}}</a> · {{rupiah .Amount}} · <span class="adm-badge">{{.Status.Label}}</span>{{with .Reference}} · ref {{.}}{{end}}{{with .FailureReason}} · {{.}}{{end}}</li>{{end}}
+        </ul>
+      </div>
+      {{end}}
+      <div class="card adm-card">
+        <h2 class="adm-h2">Timeline</h2>
+        <ol class="adm-audit">
+          {{range $r.Events}}<li><strong>{{.To.Label}}</strong> <span class="muted">{{datetime .At}} · {{.ShopActorLabel}}</span>{{with .Note}}<span class="adm-audit__meta">{{.}}</span>{{end}}</li>{{end}}
+        </ol>
+      </div>
+      <div class="card adm-card">
+        <h2 class="adm-h2">Jejak admin</h2>
+        {{template "adm-audit" .Data.Audit}}
+      </div>
+    </div>
+  </div>
+</section>
+{{end}}
+
+{{define "approve-estimate"}}
+<p id="approve-estimate" class="adm-estimate" aria-live="polite">
+  Disetujui {{.Approved}} dari {{.Requested}} barang
+  {{- if .Exchange}} · tukar barang (tanpa refund){{else}} · estimasi refund <strong>{{rupiah .Amount}}</strong>{{end}}
+  {{- if eq .Approved 0}} · <span class="field__error">setujui minimal satu barang, atau gunakan Tolak</span>{{end}}
+</p>
+{{end}}
+
+{{define "approve-estimate-fragment"}}{{template "approve-estimate" .Data}}{{end}}

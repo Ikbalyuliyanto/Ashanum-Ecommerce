@@ -8,6 +8,17 @@ import (
 	"time"
 )
 
+type AdminAuditLog struct {
+	ID          int64
+	AdminUserID int64
+	Action      string
+	EntityType  string
+	EntityID    *int64
+	EntityLabel string
+	Metadata    []byte
+	CreatedAt   time.Time
+}
+
 type Cart struct {
 	ID        int64
 	UserID    int64
@@ -34,6 +45,21 @@ type Category struct {
 	DisplayOrder int32
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+}
+
+type InventoryAdjustment struct {
+	ID            int64
+	VariantID     *int64
+	Sku           string
+	Type          string
+	QuantityDelta int32
+	StockBefore   int32
+	StockAfter    int32
+	Reason        string
+	ReferenceType *string
+	ReferenceID   *int64
+	AdminUserID   *int64
+	CreatedAt     time.Time
 }
 
 type Order struct {
@@ -65,6 +91,7 @@ type Order struct {
 	CancelReason    *string
 	StockRestoredAt *time.Time
 	CompletedAt     *time.Time
+	ConfirmedAt     *time.Time
 }
 
 type OrderItem struct {
@@ -163,15 +190,19 @@ type ProductImage struct {
 }
 
 type ProductReview struct {
-	ID          int64
-	UserID      int64
-	OrderID     int64
-	OrderItemID int64
-	ProductID   *int64
-	Rating      int16
-	Comment     string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID               int64
+	UserID           int64
+	OrderID          int64
+	OrderItemID      int64
+	ProductID        *int64
+	Rating           int16
+	Comment          string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	EditedAt         *time.Time
+	HiddenAt         *time.Time
+	HiddenBy         *int64
+	ModerationReason *string
 }
 
 type ProductVariant struct {
@@ -195,7 +226,7 @@ type ProductVariantValue struct {
 
 type Refund struct {
 	ID               int64
-	ReturnID         int64
+	ReturnID         *int64
 	PaymentID        *int64
 	Amount           int64
 	Status           string
@@ -206,6 +237,9 @@ type Refund struct {
 	FailureReason    *string
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
+	OrderID          int64
+	Source           string
+	Note             string
 }
 
 type Return struct {
@@ -248,12 +282,21 @@ type ReturnEvidence struct {
 }
 
 type ReturnItem struct {
-	ID          int64
-	ReturnID    int64
-	OrderItemID int64
-	Quantity    int32
-	UnitPrice   int64
-	Reason      *string
+	ID                   int64
+	ReturnID             int64
+	OrderItemID          int64
+	Quantity             int32
+	UnitPrice            int64
+	Reason               *string
+	ApprovedQuantity     *int32
+	Condition            *string
+	InspectedAt          *time.Time
+	RestockedQuantity    *int32
+	RestockedAt          *time.Time
+	ReplacementVariantID *int64
+	ReplacementSku       *string
+	ReplacementLabel     *string
+	ReplacementQuantity  *int32
 }
 
 type Session struct {
@@ -261,6 +304,20 @@ type Session struct {
 	UserID    int64
 	CreatedAt time.Time
 	ExpiresAt time.Time
+}
+
+type Shipment struct {
+	ID             int64
+	OrderID        int64
+	Method         string
+	CourierName    string
+	ServiceName    string
+	TrackingNumber string
+	Note           string
+	ShippedAt      time.Time
+	CreatedBy      *int64
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 type User struct {

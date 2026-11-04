@@ -10,6 +10,39 @@ import (
 	"time"
 )
 
+const createAdminUser = `-- name: CreateAdminUser :one
+
+INSERT INTO users (email, password_hash, role)
+VALUES ($1, $2, 'ADMIN')
+RETURNING id, email, role, created_at
+`
+
+type CreateAdminUserParams struct {
+	Email        string
+	PasswordHash string
+}
+
+type CreateAdminUserRow struct {
+	ID        int64
+	Email     string
+	Role      string
+	CreatedAt time.Time
+}
+
+// Admin bootstrap (create-admin command). The role is never taken from a
+// form: registration uses CreateUser and gets the CUSTOMER default.
+func (q *Queries) CreateAdminUser(ctx context.Context, arg CreateAdminUserParams) (CreateAdminUserRow, error) {
+	row := q.db.QueryRow(ctx, createAdminUser, arg.Email, arg.PasswordHash)
+	var i CreateAdminUserRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Role,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createSession = `-- name: CreateSession :exec
 INSERT INTO sessions (token_hash, user_id, expires_at)
 VALUES ($1, $2, $3)
@@ -139,6 +172,58 @@ func (q *Queries) GetUserCredentialsByEmail(ctx context.Context, email string) (
 		&i.ID,
 		&i.Email,
 		&i.PasswordHash,
+		&i.Role,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const promoteToAdmin = `-- name: PromoteToAdmin :execrows
+UPDATE users SET role = 'ADMIN' WHERE id = $1 AND role <> 'ADMIN'
+`
+
+func (q *Queries) PromoteToAdmin(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.Exec(ctx, promoteToAdmin, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setProfileName = `-- name: SetProfileName :exec
+INSERT INTO user_profiles (user_id, first_name, last_name)
+VALUES ($1, $2, $3)
+ON CONFLICT (user_id) DO UPDATE SET first_name = EXCLUDED.first_name, last_name = EXCLUDED.last_name
+`
+
+type SetProfileNameParams struct {
+	UserID    int64
+	FirstName string
+	LastName  string
+}
+
+func (q *Queries) SetProfileName(ctx context.Context, arg SetProfileNameParams) error {
+	_, err := q.db.Exec(ctx, setProfileName, arg.UserID, arg.FirstName, arg.LastName)
+	return err
+}
+
+const userByEmail = `-- name: UserByEmail :one
+SELECT id, email, role, created_at FROM users WHERE email = $1
+`
+
+type UserByEmailRow struct {
+	ID        int64
+	Email     string
+	Role      string
+	CreatedAt time.Time
+}
+
+func (q *Queries) UserByEmail(ctx context.Context, email string) (UserByEmailRow, error) {
+	row := q.db.QueryRow(ctx, userByEmail, email)
+	var i UserByEmailRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
 		&i.Role,
 		&i.CreatedAt,
 	)

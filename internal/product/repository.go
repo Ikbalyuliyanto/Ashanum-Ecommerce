@@ -10,8 +10,10 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"ecommerce/internal/audit"
 	"ecommerce/internal/database"
 	"ecommerce/internal/database/dbgen"
+	"ecommerce/internal/inventory"
 )
 
 var (
@@ -148,7 +150,9 @@ func decode(name string, raw []byte, dst any) error {
 
 // Create stores a validated product with its images, attributes and
 // variants in one transaction. The variant trigger fills the price summary.
-func (r *Repository) Create(ctx context.Context, p validProduct) (int64, error) {
+// Each variant's starting stock is recorded as an INITIAL_STOCK inventory
+// adjustment; an admin creation is also written to the audit log.
+func (r *Repository) Create(ctx context.Context, p validProduct, adminID int64) (int64, error) {
 	var id int64
 	err := pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
 		q := r.q.WithTx(tx)
@@ -212,8 +216,18 @@ func (r *Repository) Create(ctx context.Context, p validProduct) (int64, error) 
 					return err
 				}
 			}
+			if v.Stock > 0 {
+				if err := inventory.Log(ctx, q, inventory.Change{VariantID: variantID, SKU: v.SKU, Type: inventory.TypeInitial,
+					Delta: v.Stock, After: v.Stock, Reason: "Stok awal produk baru", AdminID: adminID}); err != nil {
+					return err
+				}
+			}
 		}
-		return nil
+		if adminID == 0 {
+			return nil
+		}
+		return audit.Record(ctx, q, audit.Entry{AdminID: adminID, Action: "product.create", EntityType: audit.EntityProduct,
+			EntityID: id, Label: p.Name, Meta: map[string]any{"variants": len(p.Variants), "active": p.Active}})
 	})
 
 	var pgErr *pgconn.PgError

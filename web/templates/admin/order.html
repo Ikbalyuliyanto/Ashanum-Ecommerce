@@ -1,0 +1,141 @@
+{{define "adm-title"}}Pesanan {{.Data.Order.Number}}{{end}}
+{{template "admin" .}}
+{{define "admin-content"}}
+{{$o := .Data.Order}}{{$e := .Data.Errors}}
+<section class="adm-section">
+  <a class="adm-back" href="/admin/orders">{{icon "chevron-left"}} Pesanan</a>
+  <div class="adm-head">
+    <h1>{{$o.Number}}</h1>
+    {{template "adm-order-status" $o.Status}}
+  </div>
+
+  <div class="adm-grid">
+    <div class="adm-col">
+      <div class="card adm-card">
+        <h2 class="adm-h2">Langkah berikutnya</h2>
+        {{if eq (print $o.Status) "WAITING_PAYMENT"}}
+          <p class="muted">Menunggu pembayaran pembeli. Pesanan baru bisa diproses setelah Midtrans mengonfirmasi pembayaran — admin tidak bisa menandainya lunas.</p>
+        {{end}}
+        {{if $o.CanConfirm}}
+        <form action="/admin/orders/{{$o.Number}}/confirm" method="post">
+          <p>Pembayaran sudah dikonfirmasi. Terima pesanan untuk mulai dikemas.</p>
+          <button class="btn btn--primary" type="submit">{{icon "check-circle"}} Konfirmasi &amp; Proses</button>
+        </form>
+        {{end}}
+        {{if $o.CanShip}}
+        <form class="adm-form" action="/admin/orders/{{$o.Number}}/ship" method="post">
+          <p class="muted">Isi data pengiriman secara manual (belum terhubung ke kurir; tidak ada pelacakan otomatis).</p>
+          {{template "field" (dict "ID" "courier" "Name" "courier" "Label" "Kurir" "Value" .Data.Ship.Courier "Required" true "Max" 60 "Placeholder" "mis. JNE, J&T, SiCepat" "Error" (index $e "courier"))}}
+          {{template "field" (dict "ID" "service" "Name" "service" "Label" "Layanan" "Value" .Data.Ship.Service "Optional" true "Max" 60 "Placeholder" "mis. REG" "Error" (index $e "service"))}}
+          {{template "field" (dict "ID" "tracking" "Name" "tracking" "Label" "Nomor resi" "Value" .Data.Ship.Tracking "Optional" true "Max" 60 "Error" (index $e "tracking"))}}
+          <div class="field">
+            <label class="field__label" for="ship-note">Catatan <span class="field__optional">(opsional)</span></label>
+            <textarea class="textarea" id="ship-note" name="note" maxlength="500">{{.Data.Ship.Note}}</textarea>
+          </div>
+          <button class="btn btn--primary" type="submit">{{icon "truck"}} Tandai Dikirim</button>
+        </form>
+        {{end}}
+        {{if $o.CanComplete}}
+        <form action="/admin/orders/{{$o.Number}}/complete" method="post">
+          <p>Barang sudah sampai ke pembeli? Setelah selesai, pembeli bisa memberi ulasan dan mengajukan pengembalian.</p>
+          <button class="btn btn--primary" type="submit">{{icon "check-circle"}} Selesaikan Pesanan</button>
+        </form>
+        {{end}}
+        {{if eq (print $o.Status) "COMPLETED"}}<p>Pesanan selesai {{with $o.CompletedAt}}{{datetime .}}{{end}}.</p>{{end}}
+        {{if eq (print $o.Status) "CANCELLED"}}<p>Dibatalkan {{with $o.CancelledAt}}{{datetime .}}{{end}} — {{$o.CancelReasonText}}.{{if $o.StockRestored}} Stok sudah dikembalikan.{{end}}</p>{{end}}
+
+        {{if $o.CanCancel}}
+        <details class="adm-danger-zone">
+          <summary>Batalkan pesanan</summary>
+          <form class="adm-form" action="/admin/orders/{{$o.Number}}/cancel" method="post">
+            {{if $o.CancelCreatesRefund}}
+            <p class="alert alert--warning">Pesanan ini <strong>sudah dibayar</strong>. Membatalkan akan mengembalikan stok dan mencatat refund {{rupiah $o.Total}} untuk diproses manual. Tidak ada dana yang dikirim otomatis.</p>
+            {{else}}
+            <p class="muted">Pesanan belum dibayar: transaksi Midtrans (jika ada) dibatalkan lebih dulu, lalu stok dikembalikan.</p>
+            {{end}}
+            <div class="field">
+              <label class="field__label" for="cancel-note">Alasan pembatalan</label>
+              <textarea class="textarea" id="cancel-note" name="note" required minlength="3" maxlength="500"></textarea>
+            </div>
+            <button class="btn btn--danger" type="submit">Batalkan Pesanan</button>
+          </form>
+        </details>
+        {{end}}
+      </div>
+
+      <div class="card adm-card">
+        <h2 class="adm-h2">Barang ({{$o.Quantity}})</h2>
+        <ul class="adm-lines">
+          {{range $o.Items}}
+          <li>
+            {{if .ImageURL}}<img src="{{img .ImageURL 96}}" alt="" width="48" height="48" loading="lazy">{{end}}
+            <div>
+              <strong>{{.ProductName}}</strong>
+              <span class="muted">{{with .VariantLabel}}{{.}} · {{end}}SKU {{.SKU}}</span>
+              <span>{{.Quantity}} × {{rupiah .UnitPrice}}{{if .Returned}} <span class="adm-badge">{{.Returned}} diretur</span>{{end}}{{if .ReviewID}} <span class="adm-badge">diulas</span>{{end}}</span>
+            </div>
+            <span class="num">{{rupiah .Subtotal}}</span>
+          </li>
+          {{end}}
+        </ul>
+        <dl class="adm-dl">
+          <div><dt>Subtotal</dt><dd>{{rupiah $o.Subtotal}}</dd></div>
+          <div><dt>Ongkos kirim</dt><dd>{{rupiah $o.ShippingCost}} <span class="muted">(belum dihitung)</span></dd></div>
+          {{if $o.Discount}}<div><dt>Diskon</dt><dd>−{{rupiah $o.Discount}}</dd></div>{{end}}
+          <div class="adm-dl__total"><dt>Total</dt><dd>{{rupiah $o.Total}}</dd></div>
+        </dl>
+      </div>
+
+      {{if or $o.Returns $o.Refunds}}
+      <div class="card adm-card">
+        <h2 class="adm-h2">Retur &amp; refund</h2>
+        <ul class="adm-list">
+          {{range $o.Returns}}<li><a href="/admin/returns/{{.Number}}">{{.Number}}</a> · {{.Type.Label}} · <span class="adm-badge">{{.Status.Label}}</span>{{if .Amount}} · {{rupiah .Amount}}{{end}}</li>{{end}}
+          {{range $o.Refunds}}<li><a href="/admin/refunds/{{.ID}}">Refund #{{.ID}}</a> · {{.Source.Label}} · {{rupiah .Amount}} · <span class="adm-badge">{{.Status.Label}}</span></li>{{end}}
+        </ul>
+      </div>
+      {{end}}
+    </div>
+
+    <div class="adm-col">
+      <div class="card adm-card">
+        <h2 class="adm-h2">Pembeli &amp; pengiriman</h2>
+        <dl class="adm-dl">
+          <div><dt>Akun</dt><dd>{{with $o.Buyer.Name}}{{.}} · {{end}}{{$o.Buyer.Email}}</dd></div>
+          <div><dt>Penerima</dt><dd>{{$o.Address.RecipientName}} · {{phone $o.Address.Phone}}</dd></div>
+          <div><dt>Alamat</dt><dd>{{$o.Address.Street}}, {{$o.Address.Village}}, {{$o.Address.District}}, {{$o.Address.City}}, {{$o.Address.Province}} {{$o.Address.PostalCode}}</dd></div>
+        </dl>
+        {{with $o.Shipment}}
+        <h3 class="adm-h3">Pengiriman (input manual)</h3>
+        <dl class="adm-dl">
+          <div><dt>Kurir</dt><dd>{{.Courier}}{{with .Service}} · {{.}}{{end}}</dd></div>
+          <div><dt>Nomor resi</dt><dd>{{or .Tracking "—"}}</dd></div>
+          <div><dt>Dikirim</dt><dd>{{datetime .ShippedAt}}</dd></div>
+          {{with .Note}}<div><dt>Catatan</dt><dd>{{.}}</dd></div>{{end}}
+        </dl>
+        {{end}}
+      </div>
+
+      <div class="card adm-card">
+        <h2 class="adm-h2">Waktu &amp; pembayaran</h2>
+        <dl class="adm-dl">
+          <div><dt>Dibuat</dt><dd>{{datetime $o.CreatedAt}}</dd></div>
+          {{with $o.PaidAt}}<div><dt>Dibayar</dt><dd>{{datetime .}}</dd></div>{{else}}<div><dt>Batas bayar</dt><dd>{{datetime $o.PaymentDueAt}}</dd></div>{{end}}
+          {{with $o.ConfirmedAt}}<div><dt>Dikonfirmasi</dt><dd>{{datetime .}}</dd></div>{{end}}
+          {{with $o.CompletedAt}}<div><dt>Selesai</dt><dd>{{datetime .}}</dd></div>{{end}}
+        </dl>
+        {{if $o.Payments}}
+        <ul class="adm-list">
+          {{range $o.Payments}}<li>Percobaan {{.No}} · {{rupiah .Amount}} · <span class="adm-badge">{{.Status.Label}}</span>{{with .Method}} · {{.}}{{end}} · <code>{{.ProviderOrderID}}</code>{{if .NeedsReview}} <span class="adm-badge adm-badge--warn">perlu dicek</span>{{end}}</li>{{end}}
+        </ul>
+        {{else}}<p class="muted">Belum ada percobaan pembayaran.</p>{{end}}
+      </div>
+
+      <div class="card adm-card">
+        <h2 class="adm-h2">Jejak admin</h2>
+        {{template "adm-audit" .Data.Audit}}
+      </div>
+    </div>
+  </div>
+</section>
+{{end}}

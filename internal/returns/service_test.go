@@ -165,7 +165,8 @@ func TestReturnEligibility(t *testing.T) {
 		t.Errorf("not completed: %v", err)
 	}
 	noPayment := f.order(uid, addr, line{v, 1})
-	f.exec("UPDATE orders SET status = 'COMPLETED', completed_at = now() WHERE order_number = $1", noPayment)
+	// paid_at without a PAID payment row: still not paid for a refund.
+	f.exec("UPDATE orders SET status = 'COMPLETED', paid_at = now(), completed_at = now() WHERE order_number = $1", noPayment)
 	if _, err := f.svc.Draft(f.ctx, uid, noPayment); !errors.Is(err, returns.ErrOrderNotPaid) {
 		t.Errorf("completed but never paid: %v", err)
 	}
@@ -432,44 +433,46 @@ func TestStatusTransitions(t *testing.T) {
 		}
 	}
 
+	admin := testutil.CreateAdmin(t, f.db, "admin@example.com")
+
 	// Refund: the whole path, with invalid steps refused on the way.
 	r := create(returns.TypeRefund, 2)
-	invalid("receive before approval", f.svc.MarkItemReceived(f.ctx, r, ""))
-	if _, err := f.svc.PrepareRefund(f.ctx, r); !errors.Is(err, returns.ErrInvalidTransition) {
+	invalid("receive before approval", f.svc.MarkItemReceived(f.ctx, admin, r, f.received(r, returns.ConditionRestockable)))
+	if _, err := f.svc.PrepareRefund(f.ctx, admin, r); !errors.Is(err, returns.ErrInvalidTransition) {
 		t.Errorf("refund before goods are back: %v", err)
 	}
-	if err := f.svc.Approve(f.ctx, r, "Silakan kirim barangnya"); err != nil {
+	if err := f.svc.Approve(f.ctx, admin, r, f.approveAll(r, "Silakan kirim barangnya")); err != nil {
 		t.Fatal(err)
 	}
-	invalid("approve twice", f.svc.Approve(f.ctx, r, ""))
-	invalid("reject after approval", f.svc.Reject(f.ctx, r, "terlambat"))
+	invalid("approve twice", f.svc.Approve(f.ctx, admin, r, f.approveAll(r, "")))
+	invalid("reject after approval", f.svc.Reject(f.ctx, admin, r, "terlambat"))
 	if err := f.svc.CancelByUser(f.ctx, uid, mustNumber(t, f, r)); !errors.Is(err, returns.ErrInvalidTransition) {
 		t.Errorf("buyer cancel after approval: %v", err)
 	}
-	if err := f.svc.MarkWaitingReturn(f.ctx, r, ""); err != nil {
+	if err := f.svc.MarkWaitingReturn(f.ctx, admin, r, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.svc.MarkItemReceived(f.ctx, r, "Barang diterima"); err != nil {
+	if err := f.svc.MarkItemReceived(f.ctx, admin, r, f.received(r, returns.ConditionRestockable, "Barang diterima")); err != nil {
 		t.Fatal(err)
 	}
-	invalid("exchange on a refund return", f.svc.CompleteExchange(f.ctx, r, ""))
-	refund, err := f.svc.PrepareRefund(f.ctx, r)
+	invalid("exchange on a refund return", f.svc.CompleteExchange(f.ctx, admin, r, returns.ExchangeInput{}))
+	refund, err := f.svc.PrepareRefund(f.ctx, admin, r)
 	if err != nil || refund.Amount != 200000 || refund.Status != returns.RefundPending {
 		t.Fatalf("prepare refund: %+v %v", refund, err)
 	}
-	if got := f.int("SELECT count(*) FROM refunds WHERE return_id = $1 AND status = 'PENDING' AND provider IS NULL AND payment_id IS NOT NULL", r); got != 1 {
+	if got := f.int("SELECT count(*) FROM refunds WHERE return_id = $1 AND status = 'PENDING' AND provider IS NULL AND payment_id IS NOT NULL AND source = 'RETURN'", r); got != 1 {
 		t.Errorf("pending refund rows = %d", got)
 	}
-	if _, err := f.svc.PrepareRefund(f.ctx, r); !errors.Is(err, returns.ErrInvalidTransition) {
+	if _, err := f.svc.PrepareRefund(f.ctx, admin, r); !errors.Is(err, returns.ErrRefundOpen) {
 		t.Errorf("second refund: %v", err)
 	}
-	if err := f.svc.CompleteRefund(f.ctx, r, returns.RefundResult{}); !isValidation(err) {
-		t.Errorf("refund result needs a provider: %v", err)
+	if err := f.svc.CompleteRefund(f.ctx, admin, r, returns.RefundResult{}); !isValidation(err) {
+		t.Errorf("refund result needs a reference: %v", err)
 	}
-	if err := f.svc.CompleteRefund(f.ctx, r, returns.RefundResult{Provider: "manual", Reference: "TRF-001"}); err != nil {
+	if err := f.svc.CompleteRefund(f.ctx, admin, r, returns.RefundResult{Provider: "manual", Reference: "TRF-001"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.svc.Complete(f.ctx, r, ""); err != nil {
+	if err := f.svc.Complete(f.ctx, admin, r, ""); err != nil {
 		t.Fatal(err)
 	}
 	ret, _ := f.svc.Get(f.ctx, uid, mustNumber(t, f, r))
@@ -477,43 +480,51 @@ func TestStatusTransitions(t *testing.T) {
 		ret.Refund.Provider != "manual" || len(ret.Events) != 7 || ret.ResolutionNote != "Barang diterima" || ret.CompletedAt == nil {
 		t.Errorf("completed refund return: %+v refund %+v", ret, ret.Refund)
 	}
-	invalid("anything after completion", f.svc.Cancel(f.ctx, r, ""))
+	invalid("anything after completion", f.svc.Cancel(f.ctx, admin, r, "tidak jadi"))
+	if got := f.int("SELECT count(*) FROM admin_audit_logs WHERE entity_type = 'RETURN' AND entity_id = $1", r); got != 6 {
+		t.Errorf("audit entries of the refund return = %d, want 6", got)
+	}
 
-	// Exchange path.
+	// Exchange path (the replacement is the same variant).
 	x := create(returns.TypeExchange, 1)
-	for _, step := range []func(context.Context, int64, string) error{f.svc.Approve, f.svc.MarkWaitingReturn, f.svc.MarkItemReceived} {
-		if err := step(f.ctx, x, ""); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := f.svc.PrepareRefund(f.ctx, x); !errors.Is(err, returns.ErrInvalidTransition) {
-		t.Errorf("refund on an exchange: %v", err)
-	}
-	if err := f.svc.CompleteExchange(f.ctx, x, "Pengganti dikirim"); err != nil {
+	if err := f.svc.Approve(f.ctx, admin, x, f.approveAll(x, "")); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.svc.Complete(f.ctx, x, ""); err != nil || status(x) != "COMPLETED" {
+	if err := f.svc.MarkWaitingReturn(f.ctx, admin, x, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.MarkItemReceived(f.ctx, admin, x, f.received(x, returns.ConditionDamaged)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.PrepareRefund(f.ctx, admin, x); !errors.Is(err, returns.ErrInvalidTransition) {
+		t.Errorf("refund on an exchange: %v", err)
+	}
+	if err := f.svc.CompleteExchange(f.ctx, admin, x, f.replaceWith(x, v, "Pengganti dikirim")); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.Complete(f.ctx, admin, x, ""); err != nil || status(x) != "COMPLETED" {
 		t.Errorf("exchange complete: %v %s", err, status(x))
 	}
 
 	// Reject needs a reason; a rejected request frees its quantity.
 	j := create(returns.TypeRefund, 2)
-	if err := f.svc.Reject(f.ctx, j, " "); !isValidation(err) {
+	if err := f.svc.Reject(f.ctx, admin, j, " "); !isValidation(err) {
 		t.Errorf("reject without reason: %v", err)
 	}
-	if err := f.svc.Reject(f.ctx, j, "Foto tidak menunjukkan kerusakan"); err != nil || status(j) != "REJECTED" {
+	if err := f.svc.Reject(f.ctx, admin, j, "Foto tidak menunjukkan kerusakan"); err != nil || status(j) != "REJECTED" {
 		t.Fatalf("reject: %v %s", err, status(j))
 	}
 	if d, _ := f.svc.Draft(f.ctx, uid, number); d.Items[0].Remaining() != 2 {
 		t.Errorf("remaining after rejection = %d, want 2", d.Items[0].Remaining())
 	}
-	if err := f.svc.Approve(f.ctx, 999999, ""); !errors.Is(err, returns.ErrNotFound) {
+	if err := f.svc.Approve(f.ctx, admin, 999999, returns.ApproveInput{}); !errors.Is(err, returns.ErrNotFound) {
 		t.Errorf("unknown return: %v", err)
 	}
 }
 
 func TestRefundNeverExceedsPayment(t *testing.T) {
 	f := newFixture(t)
+	admin := testutil.CreateAdmin(t, f.db, "admin@example.com")
 	uid, addr := f.user("a@example.com")
 	v := f.product("Kaos A", "A-1", 100000, 50)
 	number := f.completed(uid, addr, time.Hour, line{v, 1})
@@ -522,17 +533,79 @@ func TestRefundNeverExceedsPayment(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := f.id(n)
-	for _, step := range []func(context.Context, int64, string) error{f.svc.Approve, f.svc.MarkWaitingReturn, f.svc.MarkItemReceived} {
-		if err := step(f.ctx, id, ""); err != nil {
-			t.Fatal(err)
-		}
-	}
+	f.toReceived(admin, id, returns.ConditionRestockable)
 	f.exec("UPDATE payments SET amount = 1000 WHERE status = 'PAID'") // paid less than the refund
-	if _, err := f.svc.PrepareRefund(f.ctx, id); !errors.Is(err, returns.ErrRefundTooLarge) {
+	if _, err := f.svc.PrepareRefund(f.ctx, admin, id); !errors.Is(err, returns.ErrRefundTooLarge) {
 		t.Errorf("refund above the payment: %v", err)
 	}
 	if got := f.int("SELECT count(*) FROM refunds"); got != 0 {
 		t.Errorf("refund rows after refusal = %d", got)
+	}
+}
+
+// lineIDs are the return's lines, in id order.
+func (f *fixture) lineIDs(returnID int64) []int64 {
+	f.t.Helper()
+	rows, err := f.db.Query(f.ctx, "SELECT id FROM return_items WHERE return_id = $1 ORDER BY id", returnID)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		rows.Scan(&id)
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// approveAll approves every line in full.
+func (f *fixture) approveAll(returnID int64, note string) returns.ApproveInput {
+	in := returns.ApproveInput{Quantities: map[int64]int{}, Note: note}
+	rows, _ := f.db.Query(f.ctx, "SELECT id, quantity FROM return_items WHERE return_id = $1", returnID)
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var q int
+		rows.Scan(&id, &q)
+		in.Quantities[id] = q
+	}
+	return in
+}
+
+// received inspects every line with one condition.
+func (f *fixture) received(returnID int64, c returns.Condition, note ...string) returns.ReceiveInput {
+	in := returns.ReceiveInput{Conditions: map[int64]returns.Condition{}}
+	for _, id := range f.lineIDs(returnID) {
+		in.Conditions[id] = c
+	}
+	if len(note) > 0 {
+		in.Note = note[0]
+	}
+	return in
+}
+
+// replaceWith sends variant as the replacement of every line.
+func (f *fixture) replaceWith(returnID, variant int64, note string) returns.ExchangeInput {
+	in := returns.ExchangeInput{Replacements: map[int64]int64{}, Note: note}
+	for _, id := range f.lineIDs(returnID) {
+		in.Replacements[id] = variant
+	}
+	return in
+}
+
+// toReceived approves a return in full, then marks it waiting and received.
+func (f *fixture) toReceived(admin, id int64, c returns.Condition) {
+	f.t.Helper()
+	if err := f.svc.Approve(f.ctx, admin, id, f.approveAll(id, "")); err != nil {
+		f.t.Fatal(err)
+	}
+	if err := f.svc.MarkWaitingReturn(f.ctx, admin, id, ""); err != nil {
+		f.t.Fatal(err)
+	}
+	if err := f.svc.MarkItemReceived(f.ctx, admin, id, f.received(id, c)); err != nil {
+		f.t.Fatal(err)
 	}
 }
 

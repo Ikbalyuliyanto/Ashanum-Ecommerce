@@ -1,0 +1,66 @@
+{{define "adm-title"}}Ulasan{{end}}
+{{template "admin" .}}
+{{define "admin-content"}}
+{{$p := .Data.Page}}{{$pg := .Data.Pager}}{{$back := $pg.Current}}
+<section id="list-area" class="adm-section" hx-target="#list-area" hx-select="#list-area" hx-swap="outerHTML">
+  <div class="adm-head"><h1>Moderasi Ulasan</h1></div>
+  <p class="muted adm-note">Ulasan yang disembunyikan tetap tersimpan dan terlihat oleh pembelinya, tetapi tidak tampil publik dan tidak dihitung dalam rating produk. Ulasan tidak dihapus.</p>
+  <nav class="adm-tabs" hx-boost="true" aria-label="Status ulasan">
+    <a href="{{$pg.With "status" ""}}"{{if eq $p.Filter.Status ""}} aria-current="page"{{end}}>Semua</a>
+    <a href="{{$pg.With "status" "visible"}}"{{if eq $p.Filter.Status "visible"}} aria-current="page"{{end}}>Tampil</a>
+    <a href="{{$pg.With "status" "hidden"}}"{{if eq $p.Filter.Status "hidden"}} aria-current="page"{{end}}>Disembunyikan</a>
+  </nav>
+  <form class="adm-filter" hx-boost="true" action="/admin/reviews" method="get" role="search"
+        hx-get="/admin/reviews" hx-trigger="change from:select, submit" hx-push-url="true">
+    {{with $p.Filter.Status}}<input type="hidden" name="status" value="{{.}}">{{end}}
+    <label class="visually-hidden" for="q">Cari produk</label>
+    <input class="input" id="q" type="search" name="q" value="{{$p.Filter.Query}}" placeholder="Cari nama produk" maxlength="100">
+    <label class="visually-hidden" for="rating">Rating</label>
+    <select class="select" id="rating" name="rating">
+      <option value="">Semua rating</option>
+      <option value="5"{{if eq $p.Filter.Rating 5}} selected{{end}}>★ 5</option>
+      <option value="4"{{if eq $p.Filter.Rating 4}} selected{{end}}>★ 4</option>
+      <option value="3"{{if eq $p.Filter.Rating 3}} selected{{end}}>★ 3</option>
+      <option value="2"{{if eq $p.Filter.Rating 2}} selected{{end}}>★ 2</option>
+      <option value="1"{{if eq $p.Filter.Rating 1}} selected{{end}}>★ 1</option>
+    </select>
+    <button class="btn btn--sm" type="submit">{{icon "search"}} Cari</button>
+  </form>
+
+  {{if $p.Reviews}}
+  <ul class="adm-reviews">
+    {{range $p.Reviews}}
+    <li class="adm-review{{if .Hidden}} is-off{{end}}" id="review-{{.ID}}">
+      <div class="adm-review__head">
+        <strong>{{.ProductName}}</strong>{{with .VariantLabel}} <span class="muted">· {{.}}</span>{{end}}
+        {{if .Hidden}}<span class="adm-badge adm-badge--muted">Disembunyikan</span>{{else}}<span class="adm-badge adm-badge--ok">Tampil</span>{{end}}
+      </div>
+      <div class="adm-review__meta">
+        {{template "stars" .Rating}}
+        <span class="muted">{{.Author}} · pesanan {{.OrderNumber}} · {{date .CreatedAt}}{{if .EditedAt}} · diubah{{end}}</span>
+      </div>
+      {{if .Comment}}<p class="adm-review__comment">{{.Comment}}</p>{{else}}<p class="muted">(tanpa komentar)</p>{{end}}
+      {{if .Hidden}}
+        <p class="adm-review__reason">Alasan: {{.Reason}} <span class="muted">· {{with .HiddenAt}}{{datetime .}}{{end}}</span></p>
+        <form action="/admin/reviews/{{.ID}}/unhide" method="post">
+          <input type="hidden" name="return_to" value="{{$back}}">
+          <button class="btn btn--sm btn--outline" type="submit">Tampilkan Lagi</button>
+        </form>
+      {{else}}
+        <details class="adm-more">
+          <summary>Sembunyikan…</summary>
+          <form class="adm-form" action="/admin/reviews/{{.ID}}/hide" method="post">
+            <input type="hidden" name="return_to" value="{{$back}}">
+            <label class="field__label" for="reason-{{.ID}}">Alasan moderasi (wajib)</label>
+            <input class="input" id="reason-{{.ID}}" name="reason" required minlength="3" maxlength="500" placeholder="mis. Mengandung kata kasar">
+            <button class="btn btn--sm btn--danger" type="submit">Sembunyikan</button>
+          </form>
+        </details>
+      {{end}}
+    </li>
+    {{end}}
+  </ul>
+  {{template "adm-pager" $pg}}
+  {{else}}<p class="adm-empty">Tidak ada ulasan.</p>{{end}}
+</section>
+{{end}}

@@ -1,0 +1,92 @@
+{{/* Admin layout: sidebar on desktop, a <details> menu on small screens
+     (no JavaScript needed). Pages call {{template "admin" .}} and define
+     "title" and "admin-content". .Data embeds the active menu key (.Data.Nav). */}}
+{{define "admin" -}}
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <title>{{block "adm-title" .}}Admin{{end}} · {{.App.Name}} Admin</title>
+  <meta name="theme-color" content="#3b2a12">
+  <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"422","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>
+  <link rel="icon" href="{{asset "icons/favicon.png"}}" type="image/png">
+  <link rel="stylesheet" href="{{asset "css/app.css"}}">
+  <link rel="stylesheet" href="{{asset "css/admin.css"}}">
+  <script src="{{asset "js/htmx.min.js"}}" defer></script>
+</head>
+<body class="adm">
+  <a class="skip-link" href="#main">Lewati ke konten</a>
+  <header class="adm-top">
+    <a class="adm-brand" href="/admin">
+      <img src="{{asset "icons/favicon.png"}}" alt="" width="28" height="28">
+      <span>ASHANUM <small>Admin</small></span>
+    </a>
+    <div class="adm-top__right">
+      <a class="adm-top__link nav__hide-sm" href="/" target="_blank" rel="noopener">{{icon "external"}}<span>Lihat Toko</span></a>
+      {{with .User}}<span class="adm-top__who nav__hide-sm">{{.Email}}</span>{{end}}
+      <form action="/logout" method="post">
+        <button class="adm-top__link" type="submit">{{icon "log-out"}}<span class="nav__hide-sm">Keluar</span></button>
+      </form>
+    </div>
+  </header>
+  <details class="adm-menu">
+    <summary>{{icon "grid"}} Menu</summary>
+    {{template "admin-nav" .}}
+  </details>
+  <div class="adm-shell">
+    <aside class="adm-side" aria-label="Menu admin">{{template "admin-nav" .}}</aside>
+    <main id="main" class="adm-main">
+      {{template "notification" .}}
+      {{block "admin-content" .}}{{end}}
+    </main>
+  </div>
+</body>
+</html>
+{{- end}}
+
+{{define "admin-nav" -}}
+{{$n := .Data.Nav}}
+<nav class="adm-nav">
+  <a href="/admin"{{if eq $n "dashboard"}} aria-current="page"{{end}}>{{icon "home"}}Dashboard</a>
+  <a href="/admin/orders"{{if eq $n "orders"}} aria-current="page"{{end}}>{{icon "receipt"}}Pesanan</a>
+  <a href="/admin/products"{{if eq $n "products"}} aria-current="page"{{end}}>{{icon "package"}}Produk</a>
+  <a href="/admin/categories"{{if eq $n "categories"}} aria-current="page"{{end}}>{{icon "grid"}}Kategori</a>
+  <a href="/admin/stock"{{if eq $n "stock"}} aria-current="page"{{end}}>{{icon "award"}}Stok</a>
+  <a href="/admin/returns"{{if eq $n "returns"}} aria-current="page"{{end}}>{{icon "rotate"}}Retur &amp; Refund</a>
+  <a href="/admin/reviews"{{if eq $n "reviews"}} aria-current="page"{{end}}>{{icon "star"}}Ulasan</a>
+  <a href="/admin/reports"{{if eq $n "reports"}} aria-current="page"{{end}}>{{icon "zap"}}Laporan</a>
+</nav>
+{{- end}}
+
+{{/* Status badge of an order (order.Status). */}}
+{{define "adm-order-status" -}}
+<span class="adm-badge adm-badge--{{.}}">{{.Label}}</span>
+{{- end}}
+
+{{/* Previous/next links of an admin list (admin.pager). */}}
+{{define "adm-pager" -}}
+{{if or .HasPrev .HasNext}}
+<nav class="adm-pager" aria-label="Halaman" hx-boost="true">
+  {{if .HasPrev}}<a class="btn btn--sm" href="{{.PrevURL}}">{{icon "chevron-left"}} Sebelumnya</a>{{else}}<span></span>{{end}}
+  <span class="muted">Halaman {{.Page}}</span>
+  {{if .HasNext}}<a class="btn btn--sm" href="{{.NextURL}}">Berikutnya {{icon "chevron-right"}}</a>{{else}}<span></span>{{end}}
+</nav>
+{{end}}
+{{- end}}
+
+{{/* Audit trail entries (audit.Log list). */}}
+{{define "adm-audit" -}}
+{{if .}}
+<ol class="adm-audit">
+  {{range .}}
+  <li>
+    <strong>{{.ActionLabel}}</strong>
+    <span class="muted">{{datetime .At}} · {{.AdminEmail}}</span>
+    {{with .MetaPairs}}<span class="adm-audit__meta">{{range .}}<span>{{.Key}}: {{.Value}}</span>{{end}}</span>{{end}}
+  </li>
+  {{end}}
+</ol>
+{{else}}<p class="muted">Belum ada aktivitas admin.</p>{{end}}
+{{- end}}

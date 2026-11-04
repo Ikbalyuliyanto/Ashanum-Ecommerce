@@ -18,7 +18,7 @@ dilakukan per fase.
 | 5 | Checkout, order, snapshot alamat/produk, Beli Sekarang, riwayat & detail pesanan (shipping aggregator ditunda) | Selesai |
 | 6 | Pembayaran Midtrans Snap (**sandbox saja**), webhook, kedaluwarsa & pembatalan pesanan, pengembalian stok, reconcile | Selesai |
 | 7 | Ulasan & rating, pengajuan pengembalian (refund/tukar barang), bukti (URL), status retur, fondasi domain refund | Selesai |
-| 8 | Admin, dashboard, laporan, pengaturan | Belum |
+| 8 | Admin (role & otorisasi), dashboard, produk/kategori/varian/stok, fulfillment pesanan, retur & refund (administratif), moderasi ulasan, laporan, audit log | Selesai |
 | 9 | Security review, optimasi, load testing, deployment HG680P | Belum |
 
 ## Stack
@@ -48,6 +48,7 @@ semuanya dibaca dari binary (embed).
 | `ecommerce` / `ecommerce serve` | Jalankan web server |
 | `ecommerce migrate` | Terapkan migrasi yang belum dijalankan |
 | `ecommerce migrate status` | Daftar migrasi dan waktu diterapkan |
+| `ecommerce create-admin -email E -first-name N [-last-name N] [-promote]` | Buat akun admin (password dibaca dari stdin, bukan flag); `-promote` menjadikan akun yang sudah ada admin |
 | `ecommerce recalculate-ratings` | Perbaiki cache rating produk dari `product_reviews` (alat perbaikan) |
 | `ecommerce reconcile-payments [-limit N]` | Sinkronkan pembayaran pending dengan Midtrans, batalkan pesanan lewat batas bayar (stok kembali), daftar pembayaran yang perlu ditinjau |
 | `ecommerce version` | Versi build |
@@ -162,12 +163,56 @@ scheduler terpasang; nanti bisa dipanggil systemd timer (mis. tiap 15 menit) den
 | `POST /account/returns/{nomor}/cancel` | Batalkan pengajuan yang masih menunggu persetujuan |
 
 Ulasan dan pengembalian hanya untuk pesanan **COMPLETED** (pengembalian juga wajib sudah
-dibayar). Belum ada alur yang mengubah pesanan menjadi COMPLETED — itu datang bersama
-admin (Phase 8) dan pengiriman; test memakai fixture `testutil.CompleteOrder`. Tidak ada
-route admin: persetujuan dan langkah lanjut retur adalah method `returns.Service`.
+dibayar). Sejak Fase 8 pesanan mencapai COMPLETED lewat alur admin (lihat di bawah);
+langkah retur setelah pengajuan juga dikerjakan admin.
 
 Batas pengajuan pengembalian: `RETURN_WINDOW_DAYS` (default 7) hari setelah
 `orders.completed_at` — kebijakan bisnis yang bisa diubah, bukan aturan tetap.
+
+### Admin (Fase 8)
+
+Tidak ada admin bawaan atau password default. Buat admin pertama di server:
+
+```bash
+ecommerce create-admin -email admin@toko.id -first-name Rina      # password diketik 2x (tanpa echo)
+printf '%s\n' "$PASSWORD" | ecommerce create-admin -email admin@toko.id -first-name Rina
+ecommerce create-admin -email budi@example.com -promote             # akun yang sudah ada → ADMIN
+```
+
+Password admin minimal 12 karakter, disimpan sebagai bcrypt, tidak pernah dicetak/di-log.
+Email yang sudah terdaftar **tidak** dinaikkan diam-diam: harus memakai `-promote`
+(password akun itu tidak berubah). Setiap pemberian peran tercatat di audit log.
+
+Semua `/admin/*`: wajib login **dan** role ADMIN (dibaca dari database pada setiap
+request, jadi mencabut role langsung berlaku). Tamu diarahkan ke `/login`; akun lain
+mendapat 404 seperti halaman yang tidak ada. Mutasi hanya POST dan melewati cek
+same-origin (CSRF). Respons `Cache-Control: private, no-store` dan `X-Robots-Tag: noindex`.
+
+| Route | Keterangan |
+|-------|------------|
+| `GET /admin` | Dashboard operasional (angka langsung dari DB) |
+| `GET /admin/orders?status=&q=&page=` · `GET /admin/orders/{nomor}` | Daftar (cari nomor pesanan) & rincian |
+| `POST /admin/orders/{nomor}/confirm` · `/ship` · `/complete` · `/cancel` | WAITING_CONFIRMATION → PROCESSING → SHIPPED → COMPLETED; batal |
+| `GET /admin/products` · `/products/new` · `POST /admin/products` | Daftar (cari nama/SKU), tambah produk (varian dibuat dari kombinasi atribut) |
+| `GET /admin/products/{id}/edit` · `POST /admin/products/{id}` | Ubah info & gambar |
+| `POST /admin/products/{id}/activate` · `/deactivate` | Tampil/sembunyikan (tidak ada hapus) |
+| `POST /admin/products/{id}/variants` · `/variants/{vid}` · `/attributes` | Tambah/ubah varian (SKU, harga, aktif), tambah atribut |
+| `GET /admin/stock?status=low|out` · `GET|POST /admin/stock/{vid}` | Daftar stok & penyesuaian stok beralasan + riwayat |
+| `GET|POST /admin/categories` · `/categories/{id}/edit` · `POST /admin/categories/{id}` | Kategori (nonaktifkan, tidak dihapus) |
+| `GET /admin/returns` · `GET /admin/returns/{nomor}` | Daftar & rincian retur |
+| `POST /admin/returns/{nomor}/approve` · `/reject` · `/waiting-return` · `/received` · `/restock` | Setujui (boleh sebagian) / tolak, menunggu barang, terima & periksa, kembalikan ke stok |
+| `POST /admin/returns/{nomor}/prepare-refund` · `/complete-refund` · `/complete-exchange` · `/complete` · `/cancel` | Refund & tukar barang, selesai, batal |
+| `GET /admin/returns/{nomor}/estimate` | Estimasi refund saat jumlah disetujui diubah (fragment HTMX) |
+| `GET /admin/refunds` · `/refunds/{id}` · `POST …/processing` · `…/complete` · `…/fail` | Administrasi refund (manual) |
+| `GET /admin/reviews` · `POST /admin/reviews/{id}/hide` · `/unhide` | Moderasi ulasan (alasan wajib saat menyembunyikan) |
+| `GET /admin/reports?range=today|7d|30d|custom&from=&to=` · `GET /admin/audit` | Laporan dasar & log audit |
+
+Daftar admin: 20 per halaman (`?per=` maks. 100), pencarian memakai parameter SQL dan
+`ILIKE` yang di-escape. HTMX hanya untuk filter/tab/paginasi, estimasi persetujuan, dan
+muat ulang dashboard; semua aksi tetap berupa form biasa yang berjalan tanpa JavaScript.
+
+`LOW_STOCK_THRESHOLD` (default 5): varian dengan sisa 1..N unit dihitung "stok rendah" di
+dashboard/laporan. Tidak ada notifikasi atau worker.
 
 ### Data demo (development)
 
@@ -221,7 +266,12 @@ internal/order/              Pesanan Saya: riwayat & rincian pesanan, halaman ha
 internal/payment/            pembayaran: attempt, webhook, status, batal/kedaluwarsa, stok kembali, reconcile
 internal/payment/midtrans/   klien Midtrans (Snap redirect + Core API status) dengan net/http, sandbox saja
 internal/review/             ulasan & rating produk (sumber kebenaran product_reviews)
-internal/returns/            pengajuan pengembalian dana/tukar barang, bukti, status, domain refund
+internal/returns/            pengajuan pengembalian, persetujuan sebagian, inspeksi, restock, tukar barang, refund
+internal/admin/              HTTP back office /admin (tanpa aturan bisnis; memanggil service)
+internal/fulfillment/        alur pesanan admin: konfirmasi, kirim (manual), selesai, batal + refund
+internal/inventory/          penyesuaian stok + jejak inventory_adjustments
+internal/report/             dashboard & laporan (SQL agregat)
+internal/audit/              admin audit log (append-only)
 internal/validate/           aturan validasi input bersama (email, HP, nama, password)
 internal/database/dbgen/     kode hasil sqlc (jangan diedit manual)
 internal/testutil/           schema PostgreSQL terisolasi untuk test
@@ -246,7 +296,13 @@ Perbedaan dari struktur di blueprint:
 - Alamat dipisah ke modul `internal/address/` (blueprint menaruhnya di modul user) agar
   service-nya bisa dipakai ulang langsung oleh API `/api/v1/addresses`.
 - Layout akun bernama `layouts/account.html` (bukan `user.html`), template halaman akun di
-  `web/templates/user/`. Layout `admin.html` dibuat di fase admin.
+  `web/templates/user/`. Layout admin: `layouts/admin.html` + `web/static/css/admin.css`
+  (dimuat hanya di area admin).
+- Admin blueprint `internal/admin/{dashboard,product,…}` disederhanakan: satu paket HTTP
+  `internal/admin/` di atas service domain. Aturan bisnis tetap di modul domainnya
+  (`fulfillment`, `inventory`, `product`, `category`, `returns`, `review`, `report`), sehingga
+  API admin kelak memakai service yang sama. Middleware admin (`RequireAdmin`) ada di
+  `internal/auth/middleware.go`, dengan alasan yang sama seperti `RequireUser`.
 - Tidak ada partial `pagination`: listing memakai "Muat lebih banyak" (fragment
   `result-items` di `product/listing.html`).
 - Halaman `/categories/{slug}` ditangani modul `product` (isinya daftar produk); modul
@@ -384,17 +440,76 @@ menghasilkan URL, service retur tidak berubah.
 REFUND `REQUESTED → APPROVED → WAITING_RETURN → ITEM_RECEIVED → REFUND_PENDING →
 REFUNDED → COMPLETED`; EXCHANGE `… → ITEM_RECEIVED → EXCHANGED → COMPLETED`;
 `REQUESTED → REJECTED` (alasan wajib); `REQUESTED | APPROVED | WAITING_RETURN → CANCELLED`.
-Pembeli hanya mengajukan dan boleh membatalkan selama REQUESTED. `Approve`, `Reject`,
-`MarkWaitingReturn`, `MarkItemReceived`, `PrepareRefund`, `CompleteRefund`,
-`CompleteExchange`, `Complete`, `Cancel` siap dipanggil admin (Phase 8); belum ada route.
-Setiap langkah tercatat di `return_events` (timeline). Stok tidak berubah saat barang
-diterima — restock adalah keputusan admin.
+Pembeli hanya mengajukan dan boleh membatalkan selama REQUESTED; semua langkah lain
+dikerjakan admin lewat `returns.Service` (state machine di `policy.go`, tidak diduplikasi
+di handler). Setiap langkah tercatat di `return_events` (timeline) dan `admin_audit_logs`.
 
 **Refund.** Tabel `refunds` (PENDING/APPROVED/PROCESSING/SUCCEEDED/FAILED/CANCELLED).
 `PrepareRefund` membuat refund PENDING untuk payment PAID pesanan, dengan total refund
 tidak boleh melebihi yang dibayar. **Tidak ada panggilan API refund Midtrans**; uang tidak
 dikembalikan otomatis. `CompleteRefund` hanya mencatat refund yang dilakukan di luar
 sistem (mis. transfer manual) beserta referensinya.
+
+**Persetujuan sebagian.** `return_items.approved_quantity` (0..diminta, NULL sebelum
+ditinjau) disimpan eksplisit; nilai refund = jumlah disetujui × harga yang dibayar
+(dihitung server, tidak pernah dari form). Minimal satu unit harus disetujui; menyetujui
+nol ditolak — gunakan Tolak (alasan wajib, tampil ke pembeli). Retur yang masih berlaku
+menahan `coalesce(approved_quantity, quantity)` unit, jadi unit yang tidak disetujui bisa
+diajukan lagi selama batas waktu.
+
+**Inspeksi & restock.** Saat barang diterima admin wajib memilih kondisi tiap baris:
+`RESTOCKABLE` / `DAMAGED` / `NON_RESTOCKABLE`. Menerima barang **tidak** mengubah stok.
+"Kembalikan ke Stok" menambah stok hanya untuk baris RESTOCKABLE, sekali per baris
+(`restocked_at` + `restocked_quantity`; permintaan ganda/bersamaan tidak menggandakan
+stok), dengan adjustment `RETURN_RESTOCK`. Barang rusak tidak pernah kembali dijual.
+
+**Tukar barang.** Admin memilih varian pengganti (varian aktif dari produk yang sama).
+Stok pengganti baru dikurangi saat "Kirim Barang Pengganti", atomik
+(`UPDATE … SET stock = stock - n WHERE id = … AND stock >= n`) dengan adjustment
+`EXCHANGE_OUT`; stok kurang → langkah ditolak dan tidak ada yang berubah. Varian/SKU
+pengganti disimpan di `return_items.replacement_*`.
+
+**Refund (administratif).** Sumber `RETURN` atau `ORDER_CANCELLATION` (pesanan berbayar
+yang dibatalkan admin). Alur: PENDING → PROCESSING → SUCCEEDED (referensi transfer wajib)
+atau FAILED (alasan wajib; retur bisa disiapkan refund lagi). Total refund per payment
+tidak bisa melebihi yang dibayar (baris payment dikunci). **Tidak ada panggilan API refund
+Midtrans**: dana dikembalikan di luar sistem dan hasilnya dicatat.
+
+**Fulfillment pesanan.** `WAITING_PAYMENT` hanya berpindah lewat pembayaran yang
+dikonfirmasi Midtrans (Fase 6); admin tidak bisa menandai lunas, dan CHECK
+`orders_paid_status_chk` menolak PROCESSING/SHIPPED/COMPLETED tanpa `paid_at`. Admin:
+`WAITING_CONFIRMATION → PROCESSING` (konfirmasi) → `SHIPPED` (kurir, layanan, resi diisi
+manual ke tabel `shipments`; tidak ada API kurir dan bukan pelacakan realtime) →
+`COMPLETED` (`completed_at` di transaksi yang sama: ulasan & retur terbuka). Tidak ada
+lompatan status. Pembatalan admin: pesanan belum bayar mengikuti aturan Fase 6 (transaksi
+Midtrans dibatalkan dulu); pesanan berbayar yang belum dikirim → stok kembali sekali
+(`stock_restored_at`, adjustment `ORDER_RESTORE`) + refund PENDING sebesar yang dibayar;
+pesanan terkirim/selesai tidak bisa dibatalkan (pakai retur). Kunci: orders → payments →
+variants (urut id).
+
+**Stok & jejaknya.** `product_variants.stock` tetap satu-satunya angka stok.
+`inventory_adjustments` (tipe `INITIAL_STOCK`, `MANUAL_ADJUSTMENT`, `RETURN_RESTOCK`,
+`EXCHANGE_OUT`, `ORDER_RESTORE`; stok sebelum/sesudah, alasan, referensi, admin) ditulis
+di transaksi yang sama dengan perubahan stok dan hanya berfungsi sebagai jejak. Penyesuaian
+manual: kunci varian → validasi hasil ≥ 0 → update → adjustment → audit. Form produk/varian
+tidak pernah menulis stok.
+
+**Moderasi ulasan.** Admin bisa menyembunyikan (alasan wajib) dan menampilkan lagi; tidak
+ada hapus. Ulasan tersembunyi tidak tampil publik dan **tidak dihitung** di rating —
+rating dihitung ulang di transaksi yang sama. Pembeli tetap melihat (dan boleh mengubah)
+ulasannya, dengan label "Tidak ditampilkan publik"; mengubahnya tidak membuatnya tampil.
+
+**Laporan.** Penjualan = total pesanan yang **dibayar** pada periode (paid_at) dan tidak
+dibatalkan; WAITING_PAYMENT dan keranjang tidak pernah dihitung; pesanan berbayar yang
+dibatalkan ditampilkan terpisah. Hari dihitung dalam WIB. Semua angka dari SQL agregat
+(satu query per blok, tanpa query per baris).
+
+**Audit log.** `admin_audit_logs` (admin, aksi, entitas, label, metadata JSON) ditulis di
+transaksi yang sama dengan aksinya; trigger menolak UPDATE/DELETE. Metadata berisi status,
+jumlah, catatan — tidak pernah password, token, atau kunci.
+
+**Role.** `CUSTOMER` (default registrasi; role tidak pernah dibaca dari form) dan
+`ADMIN`. Migrasi 0009 mengganti nama nilai lama `USER` menjadi `CUSTOMER`.
 
 **Gambar.** Database menyimpan URL, bukan file. `media.Valid` hanya menerima URL https
 Cloudinary atau data URI kecil (data demo); `{{img url lebar}}` meminta Cloudinary
@@ -432,7 +547,7 @@ Build di mesin development:
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o ecommerce ./cmd/web
 ```
 
-Hasilnya satu file ELF statis (~14 MB) yang sudah berisi template, CSS, JS, dan migrasi.
+Hasilnya satu file ELF statis (~15 MB) yang sudah berisi template, CSS, JS, dan migrasi.
 
 Persiapan sekali di perangkat (Armbian):
 
@@ -461,6 +576,14 @@ ssh user@hg680p '
 
 `systemd-run` membaca file env persis seperti service (sebagai root), lalu menjalankan
 migrasi sebagai user `ecommerce`.
+
+Admin pertama (sekali, setelah rilis pertama; password diketik dua kali tanpa echo dan
+tidak masuk riwayat shell):
+
+```bash
+ssh -t user@hg680p sudo systemd-run --quiet --wait --pty --collect --uid=ecommerce --gid=ecommerce \
+  -p EnvironmentFile=/etc/ecommerce/ecommerce.env /opt/ecommerce/ecommerce create-admin -email admin@toko.id -first-name Rina
+```
 
 Catatan:
 

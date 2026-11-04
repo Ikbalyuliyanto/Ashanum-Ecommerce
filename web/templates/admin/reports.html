@@ -1,0 +1,64 @@
+{{define "adm-title"}}Laporan{{end}}
+{{template "admin" .}}
+{{define "admin-content"}}
+{{$r := .Data.Report}}{{$rg := $r.Range}}
+<section class="adm-section">
+  <div class="adm-head">
+    <h1>Laporan</h1>
+    <a class="btn btn--sm" href="/admin/audit">{{icon "receipt"}} Log Audit</a>
+  </div>
+  <nav class="adm-tabs" aria-label="Periode">
+    <a href="/admin/reports?range=today"{{if eq $rg.Key "today"}} aria-current="page"{{end}}>Hari ini</a>
+    <a href="/admin/reports?range=7d"{{if eq $rg.Key "7d"}} aria-current="page"{{end}}>7 hari</a>
+    <a href="/admin/reports?range=30d"{{if eq $rg.Key "30d"}} aria-current="page"{{end}}>30 hari</a>
+  </nav>
+  <form class="adm-filter" action="/admin/reports" method="get">
+    <input type="hidden" name="range" value="custom">
+    <label>Dari <input class="input" type="date" name="from" value="{{$rg.FromDate}}" required></label>
+    <label>Sampai <input class="input" type="date" name="to" value="{{$rg.ToDate}}" required></label>
+    <button class="btn btn--sm" type="submit">Tampilkan</button>
+  </form>
+  {{if .Data.BadRange}}<p class="alert alert--error" role="alert">Rentang tanggal tidak valid (maks. 366 hari, tanggal awal ≤ akhir). Menampilkan 7 hari terakhir.</p>{{end}}
+  <p class="muted adm-note">Periode {{$rg.FromDate}} s.d. {{$rg.ToDate}} (WIB, {{$rg.Days}} hari).</p>
+
+  <div class="adm-stats">
+    <div class="adm-stat"><span>Penjualan</span><strong>{{rupiah $r.Sales.Revenue}}</strong><small>{{$r.Sales.PaidOrders}} pesanan dibayar · {{$r.Sales.Units}} barang</small></div>
+    <div class="adm-stat"><span>Rata-rata pesanan</span><strong>{{rupiah $r.Sales.AverageOrder}}</strong></div>
+    <div class="adm-stat"><span>Dibayar lalu dibatalkan</span><strong>{{$r.Sales.CancelledOrders}}</strong><small>{{rupiah $r.Sales.CancelledAmount}} (tidak termasuk penjualan)</small></div>
+    <div class="adm-stat"><span>Pengembalian diajukan</span><strong>{{$r.Returns.Returns}}</strong><small>{{$r.Returns.RefundReturns}} refund · {{$r.Returns.ExchangeReturns}} tukar</small></div>
+    <div class="adm-stat"><span>Refund dibayarkan</span><strong>{{rupiah $r.Returns.Refunded}}</strong><small>retur {{rupiah $r.Returns.RefundedReturns}} · pembatalan {{rupiah $r.Returns.RefundedCancellations}}</small></div>
+    <div class="adm-stat adm-stat--warn"><span>Refund belum dibayarkan</span><strong>{{rupiah $r.Returns.RefundsOpen}}</strong><small>semua periode</small></div>
+  </div>
+  <p class="muted adm-note"><strong>Definisi:</strong> penjualan = total pesanan yang <em>dibayar</em> pada periode ini (waktu pembayaran dikonfirmasi Midtrans) dan tidak dibatalkan. Pesanan Belum Bayar dan isi keranjang tidak dihitung. Refund dihitung saat dicatat berhasil.</p>
+
+  <div class="adm-grid">
+    <div class="adm-col">
+      <div class="card adm-card">
+        <h2 class="adm-h2">Status pesanan dibuat ({{$r.OrdersTotal}})</h2>
+        <table class="adm-table adm-table--plain">
+          <thead><tr><th>Status</th><th class="num">Pesanan</th><th class="num">Nilai</th></tr></thead>
+          <tbody>{{range $r.Statuses}}<tr><td>{{template "adm-order-status" .Status}}</td><td class="num">{{.Orders}}</td><td class="num">{{rupiah .Amount}}</td></tr>{{end}}</tbody>
+        </table>
+      </div>
+      <div class="card adm-card">
+        <h2 class="adm-h2">Produk terlaris</h2>
+        {{if $r.TopProducts}}
+        <table class="adm-table adm-table--plain">
+          <thead><tr><th>#</th><th>Produk</th><th class="num">Terjual</th><th class="num">Nilai</th></tr></thead>
+          <tbody>{{range $i, $t := $r.TopProducts}}<tr><td>{{add $i 1}}</td><td>{{if $t.ProductID}}<a href="/admin/products/{{$t.ProductID}}/edit">{{$t.Name}}</a>{{else}}{{$t.Name}} <span class="muted">(dihapus)</span>{{end}}</td><td class="num">{{$t.Units}}</td><td class="num">{{rupiah $t.Revenue}}</td></tr>{{end}}</tbody>
+        </table>
+        {{else}}<p class="muted">Belum ada penjualan pada periode ini.</p>{{end}}
+      </div>
+    </div>
+    <div class="adm-col">
+      <div class="card adm-card">
+        <h2 class="adm-h2">Stok rendah (≤ {{$r.Threshold}})</h2>
+        {{if $r.LowStock}}
+        <ul class="adm-list">{{range $r.LowStock}}<li><a href="/admin/stock/{{.VariantID}}">{{.ProductName}}{{with .VariantLabel}} · {{.}}{{end}}</a> <span class="adm-badge adm-badge--warn">{{.Stock}}</span></li>{{end}}</ul>
+        <a class="btn btn--sm" href="/admin/stock?status=low">Lihat semua</a>
+        {{else}}<p class="muted">Tidak ada varian dengan stok rendah.</p>{{end}}
+      </div>
+    </div>
+  </div>
+</section>
+{{end}}

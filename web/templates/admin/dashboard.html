@@ -1,0 +1,37 @@
+{{define "adm-title"}}Dashboard{{end}}
+{{template "admin" .}}
+{{define "admin-content"}}
+{{$d := .Data.D}}
+<section id="dash" class="adm-section">
+  <div class="adm-head">
+    <h1>Dashboard</h1>
+    <a class="btn btn--sm" href="/admin" hx-get="/admin" hx-select="#dash" hx-target="#dash" hx-swap="outerHTML">{{icon "rotate"}} Muat ulang</a>
+  </div>
+  <p class="muted adm-note">Data per {{datetime $d.At}}. Semua angka dihitung langsung dari database.</p>
+
+  <h2 class="adm-h2">Pesanan</h2>
+  <div class="adm-stats">
+    <a class="adm-stat" href="/admin/orders"><span>Pesanan baru hari ini</span><strong>{{$d.NewToday}}</strong></a>
+    <a class="adm-stat adm-stat--warn" href="/admin/orders?status=confirm"><span>Menunggu konfirmasi</span><strong>{{$d.WaitingConfirmation}}</strong></a>
+    <a class="adm-stat" href="/admin/orders?status=processing"><span>Diproses</span><strong>{{$d.Processing}}</strong></a>
+    <a class="adm-stat" href="/admin/orders?status=shipped"><span>Dikirim</span><strong>{{$d.Shipped}}</strong></a>
+    <a class="adm-stat" href="/admin/orders?status=unpaid"><span>Belum dibayar</span><strong>{{$d.WaitingPayment}}</strong></a>
+  </div>
+
+  <h2 class="adm-h2">Penjualan</h2>
+  <div class="adm-stats">
+    <a class="adm-stat" href="/admin/reports?range=today"><span>Penjualan hari ini</span><strong>{{rupiah $d.SalesToday}}</strong><small>{{$d.PaidToday}} pesanan dibayar</small></a>
+    <a class="adm-stat" href="/admin/reports?range=7d"><span>Penjualan 7 hari</span><strong>{{rupiah $d.SalesWeek}}</strong><small>{{$d.PaidWeek}} pesanan dibayar</small></a>
+  </div>
+
+  <h2 class="adm-h2">Retur, refund &amp; stok</h2>
+  <div class="adm-stats">
+    <a class="adm-stat adm-stat--warn" href="/admin/returns?status=review"><span>Retur menunggu review</span><strong>{{$d.ReturnsRequested}}</strong></a>
+    <a class="adm-stat" href="/admin/returns?status=progress"><span>Retur berjalan</span><strong>{{$d.ReturnsInProgress}}</strong></a>
+    <a class="adm-stat adm-stat--warn" href="/admin/refunds?status=open"><span>Refund menunggu proses</span><strong>{{$d.RefundsOpen}}</strong><small>{{rupiah $d.RefundsOpenAmount}}</small></a>
+    <a class="adm-stat" href="/admin/stock?status=low"><span>Varian stok rendah (≤ {{$d.LowStockThreshold}})</span><strong>{{$d.LowStock}}</strong></a>
+    <a class="adm-stat adm-stat--danger" href="/admin/stock?status=out"><span>Varian habis</span><strong>{{$d.OutOfStock}}</strong></a>
+  </div>
+  <p class="muted adm-note">Penjualan = total pesanan yang dibayar (dikonfirmasi Midtrans) dan tidak dibatalkan. Pesanan Belum Bayar tidak dihitung.</p>
+</section>
+{{end}}

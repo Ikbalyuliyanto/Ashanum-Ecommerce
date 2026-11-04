@@ -7,7 +7,187 @@ package dbgen
 
 import (
 	"context"
+	"time"
 )
+
+const adminProduct = `-- name: AdminProduct :one
+SELECT p.id, p.category_id, p.name, p.slug, p.description, p.brand, p.active, p.featured, p.flash_sale,
+       p.sold_count, p.rating_average, p.rating_count, p.created_at, p.updated_at,
+       coalesce((SELECT json_agg(json_build_object('url', i.url, 'alt', i.alt)
+                                 ORDER BY i.display_order, i.id)
+                 FROM product_images i WHERE i.product_id = p.id), '[]')::json AS images,
+       coalesce((SELECT json_agg(json_build_object(
+                          'id', a.id, 'name', a.name,
+                          'values', (SELECT coalesce(json_agg(json_build_object('id', av.id, 'value', av.value)
+                                                              ORDER BY av.display_order, av.id), '[]')
+                                     FROM product_attribute_values av WHERE av.attribute_id = a.id))
+                        ORDER BY a.display_order, a.id)
+                 FROM product_attributes a WHERE a.product_id = p.id), '[]')::json AS attributes,
+       coalesce((SELECT json_agg(json_build_object(
+                          'id', v.id, 'sku', v.sku, 'price', v.price, 'original_price', v.original_price,
+                          'stock', v.stock, 'active', v.active,
+                          'value_ids', (SELECT coalesce(json_agg(vv.value_id ORDER BY a.display_order, a.id), '[]')
+                                        FROM product_variant_values vv
+                                        JOIN product_attributes a ON a.id = vv.attribute_id
+                                        WHERE vv.variant_id = v.id))
+                        ORDER BY v.id)
+                 FROM product_variants v WHERE v.product_id = p.id), '[]')::json AS variants
+FROM products p
+WHERE p.id = $1
+`
+
+type AdminProductRow struct {
+	ID            int64
+	CategoryID    int64
+	Name          string
+	Slug          string
+	Description   string
+	Brand         string
+	Active        bool
+	Featured      bool
+	FlashSale     bool
+	SoldCount     int32
+	RatingAverage float64
+	RatingCount   int32
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	Images        []byte
+	Attributes    []byte
+	Variants      []byte
+}
+
+// AdminProduct loads any product (active or not) with images, attributes
+// and every variant (inactive ones included) in one round trip.
+func (q *Queries) AdminProduct(ctx context.Context, id int64) (AdminProductRow, error) {
+	row := q.db.QueryRow(ctx, adminProduct, id)
+	var i AdminProductRow
+	err := row.Scan(
+		&i.ID,
+		&i.CategoryID,
+		&i.Name,
+		&i.Slug,
+		&i.Description,
+		&i.Brand,
+		&i.Active,
+		&i.Featured,
+		&i.FlashSale,
+		&i.SoldCount,
+		&i.RatingAverage,
+		&i.RatingCount,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Images,
+		&i.Attributes,
+		&i.Variants,
+	)
+	return i, err
+}
+
+const adminProducts = `-- name: AdminProducts :many
+
+SELECT p.id, p.name, p.slug, p.brand, p.active, p.price, p.price_max, p.in_stock,
+       c.name AS category_name, c.active AS category_active,
+       (SELECT count(*) FROM product_variants v WHERE v.product_id = p.id)::int AS variant_count,
+       (SELECT coalesce(sum(v.stock), 0) FROM product_variants v WHERE v.product_id = p.id AND v.active)::int AS stock,
+       coalesce((SELECT i.url FROM product_images i WHERE i.product_id = p.id
+                 ORDER BY i.display_order, i.id LIMIT 1), '')::text AS image_url
+FROM products p
+JOIN categories c ON c.id = p.category_id
+WHERE ($1::bigint IS NULL OR p.category_id = $1)
+  AND ($2::text = '' OR ($2::text = 'active') = p.active)
+  AND ($3::text = '' OR p.name ILIKE '%' || $3::text || '%'
+       OR EXISTS (SELECT 1 FROM product_variants v WHERE v.product_id = p.id AND v.sku ILIKE '%' || $3::text || '%'))
+ORDER BY p.created_at DESC, p.id DESC
+LIMIT $5 OFFSET $4
+`
+
+type AdminProductsParams struct {
+	CategoryID *int64
+	Status     string
+	Q          string
+	RowOffset  int32
+	RowLimit   int32
+}
+
+type AdminProductsRow struct {
+	ID             int64
+	Name           string
+	Slug           string
+	Brand          string
+	Active         bool
+	Price          *int64
+	PriceMax       *int64
+	InStock        bool
+	CategoryName   string
+	CategoryActive bool
+	VariantCount   int32
+	Stock          int32
+	ImageUrl       string
+}
+
+// Admin catalog management. Products are deactivated, never deleted, so
+// order history and returns keep their catalog links.
+// AdminProducts lists every product (any status) newest first. q searches
+// the name or a variant SKU; status is "" (all), "active" or "inactive".
+func (q *Queries) AdminProducts(ctx context.Context, arg AdminProductsParams) ([]AdminProductsRow, error) {
+	rows, err := q.db.Query(ctx, adminProducts,
+		arg.CategoryID,
+		arg.Status,
+		arg.Q,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AdminProductsRow{}
+	for rows.Next() {
+		var i AdminProductsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Slug,
+			&i.Brand,
+			&i.Active,
+			&i.Price,
+			&i.PriceMax,
+			&i.InStock,
+			&i.CategoryName,
+			&i.CategoryActive,
+			&i.VariantCount,
+			&i.Stock,
+			&i.ImageUrl,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const assignValueToAllVariants = `-- name: AssignValueToAllVariants :exec
+INSERT INTO product_variant_values (product_id, variant_id, attribute_id, value_id)
+SELECT v.product_id, v.id, $1, $2
+FROM product_variants v
+WHERE v.product_id = $3
+`
+
+type AssignValueToAllVariantsParams struct {
+	AttributeID int64
+	ValueID     int64
+	ProductID   int64
+}
+
+// AssignValueToAllVariants gives every variant of a product the value of a
+// newly added attribute, so each variant keeps one value per attribute.
+func (q *Queries) AssignValueToAllVariants(ctx context.Context, arg AssignValueToAllVariantsParams) error {
+	_, err := q.db.Exec(ctx, assignValueToAllVariants, arg.AttributeID, arg.ValueID, arg.ProductID)
+	return err
+}
 
 const createProduct = `-- name: CreateProduct :one
 
@@ -150,6 +330,42 @@ func (q *Queries) CreateProductVariantValue(ctx context.Context, arg CreateProdu
 		arg.AttributeID,
 		arg.ValueID,
 	)
+	return err
+}
+
+const createVariantRow = `-- name: CreateVariantRow :one
+INSERT INTO product_variants (product_id, sku, price, original_price, stock, active)
+VALUES ($1, $2, $3, $4, $5, true)
+RETURNING id
+`
+
+type CreateVariantRowParams struct {
+	ProductID     int64
+	Sku           string
+	Price         int64
+	OriginalPrice *int64
+	Stock         int32
+}
+
+func (q *Queries) CreateVariantRow(ctx context.Context, arg CreateVariantRowParams) (int64, error) {
+	row := q.db.QueryRow(ctx, createVariantRow,
+		arg.ProductID,
+		arg.Sku,
+		arg.Price,
+		arg.OriginalPrice,
+		arg.Stock,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+const deleteProductImages = `-- name: DeleteProductImages :exec
+DELETE FROM product_images WHERE product_id = $1
+`
+
+func (q *Queries) DeleteProductImages(ctx context.Context, productID int64) error {
+	_, err := q.db.Exec(ctx, deleteProductImages, productID)
 	return err
 }
 
@@ -479,6 +695,197 @@ func (q *Queries) ListRelatedProducts(ctx context.Context, arg ListRelatedProduc
 			&i.RatingCount,
 			&i.ImageUrl,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockProductRow = `-- name: LockProductRow :one
+SELECT id, name, active FROM products WHERE id = $1 FOR UPDATE
+`
+
+type LockProductRowRow struct {
+	ID     int64
+	Name   string
+	Active bool
+}
+
+func (q *Queries) LockProductRow(ctx context.Context, id int64) (LockProductRowRow, error) {
+	row := q.db.QueryRow(ctx, lockProductRow, id)
+	var i LockProductRowRow
+	err := row.Scan(&i.ID, &i.Name, &i.Active)
+	return i, err
+}
+
+const lockProductVariant = `-- name: LockProductVariant :one
+SELECT id, product_id, sku, price, original_price, stock, active
+FROM product_variants
+WHERE id = $1 AND product_id = $2
+FOR UPDATE
+`
+
+type LockProductVariantParams struct {
+	ID        int64
+	ProductID int64
+}
+
+type LockProductVariantRow struct {
+	ID            int64
+	ProductID     int64
+	Sku           string
+	Price         int64
+	OriginalPrice *int64
+	Stock         int32
+	Active        bool
+}
+
+func (q *Queries) LockProductVariant(ctx context.Context, arg LockProductVariantParams) (LockProductVariantRow, error) {
+	row := q.db.QueryRow(ctx, lockProductVariant, arg.ID, arg.ProductID)
+	var i LockProductVariantRow
+	err := row.Scan(
+		&i.ID,
+		&i.ProductID,
+		&i.Sku,
+		&i.Price,
+		&i.OriginalPrice,
+		&i.Stock,
+		&i.Active,
+	)
+	return i, err
+}
+
+const nextAttributeOrder = `-- name: NextAttributeOrder :one
+SELECT coalesce(max(display_order) + 1, 0)::int FROM product_attributes WHERE product_id = $1
+`
+
+func (q *Queries) NextAttributeOrder(ctx context.Context, productID int64) (int32, error) {
+	row := q.db.QueryRow(ctx, nextAttributeOrder, productID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const nextValueOrder = `-- name: NextValueOrder :one
+SELECT coalesce(max(display_order) + 1, 0)::int FROM product_attribute_values WHERE attribute_id = $1
+`
+
+func (q *Queries) NextValueOrder(ctx context.Context, attributeID int64) (int32, error) {
+	row := q.db.QueryRow(ctx, nextValueOrder, attributeID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const setProductActive = `-- name: SetProductActive :execrows
+UPDATE products SET active = $1 WHERE id = $2 AND active <> $1
+`
+
+type SetProductActiveParams struct {
+	Active bool
+	ID     int64
+}
+
+func (q *Queries) SetProductActive(ctx context.Context, arg SetProductActiveParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setProductActive, arg.Active, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const updateProduct = `-- name: UpdateProduct :exec
+UPDATE products SET category_id = $1, name = $2, slug = $3, description = $4,
+                    brand = $5, active = $6, featured = $7, flash_sale = $8
+WHERE id = $9
+`
+
+type UpdateProductParams struct {
+	CategoryID  int64
+	Name        string
+	Slug        string
+	Description string
+	Brand       string
+	Active      bool
+	Featured    bool
+	FlashSale   bool
+	ID          int64
+}
+
+func (q *Queries) UpdateProduct(ctx context.Context, arg UpdateProductParams) error {
+	_, err := q.db.Exec(ctx, updateProduct,
+		arg.CategoryID,
+		arg.Name,
+		arg.Slug,
+		arg.Description,
+		arg.Brand,
+		arg.Active,
+		arg.Featured,
+		arg.FlashSale,
+		arg.ID,
+	)
+	return err
+}
+
+const updateVariant = `-- name: UpdateVariant :exec
+UPDATE product_variants SET sku = $1, price = $2, original_price = $3, active = $4
+WHERE id = $5 AND product_id = $6
+`
+
+type UpdateVariantParams struct {
+	Sku           string
+	Price         int64
+	OriginalPrice *int64
+	Active        bool
+	ID            int64
+	ProductID     int64
+}
+
+// UpdateVariant changes what a variant sells for; stock is never written
+// here (inventory adjustments only). The summary trigger refreshes products.
+func (q *Queries) UpdateVariant(ctx context.Context, arg UpdateVariantParams) error {
+	_, err := q.db.Exec(ctx, updateVariant,
+		arg.Sku,
+		arg.Price,
+		arg.OriginalPrice,
+		arg.Active,
+		arg.ID,
+		arg.ProductID,
+	)
+	return err
+}
+
+const variantCombos = `-- name: VariantCombos :many
+SELECT v.id, coalesce(array_agg(vv.value_id ORDER BY a.display_order, a.id)
+                      FILTER (WHERE vv.value_id IS NOT NULL), '{}')::bigint[] AS value_ids
+FROM product_variants v
+LEFT JOIN product_variant_values vv ON vv.variant_id = v.id
+LEFT JOIN product_attributes a ON a.id = vv.attribute_id
+WHERE v.product_id = $1
+GROUP BY v.id
+`
+
+type VariantCombosRow struct {
+	ID       int64
+	ValueIds []int64
+}
+
+// VariantCombos lists each variant's value per attribute (attribute order),
+// to refuse a duplicate combination.
+func (q *Queries) VariantCombos(ctx context.Context, productID int64) ([]VariantCombosRow, error) {
+	rows, err := q.db.Query(ctx, variantCombos, productID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []VariantCombosRow{}
+	for rows.Next() {
+		var i VariantCombosRow
+		if err := rows.Scan(&i.ID, &i.ValueIds); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

@@ -11,7 +11,13 @@ import (
 )
 
 const getOrder = `-- name: GetOrder :one
-SELECT id, order_number, user_id, idempotency_key, status, subtotal, shipping_cost, discount, total, address_label, recipient_name, recipient_phone, province, city, district, village, postal_code, address, latitude, longitude, created_at, updated_at, payment_due_at, paid_at, cancelled_at, cancel_reason, stock_restored_at, completed_at FROM orders WHERE order_number = $1 AND user_id = $2
+SELECT o.id, o.order_number, o.user_id, o.idempotency_key, o.status, o.subtotal, o.shipping_cost, o.discount, o.total, o.address_label, o.recipient_name, o.recipient_phone, o.province, o.city, o.district, o.village, o.postal_code, o.address, o.latitude, o.longitude, o.created_at, o.updated_at, o.payment_due_at, o.paid_at, o.cancelled_at, o.cancel_reason, o.stock_restored_at, o.completed_at, o.confirmed_at,
+       (o.paid_at IS NOT NULL AND EXISTS (
+            SELECT 1 FROM payments p WHERE p.order_id = o.id AND p.status = 'PAID'))::boolean AS paid,
+       s.courier_name, s.service_name, s.tracking_number, s.shipped_at
+FROM orders o
+LEFT JOIN shipments s ON s.order_id = o.id
+WHERE o.order_number = $1 AND o.user_id = $2
 `
 
 type GetOrderParams struct {
@@ -19,9 +25,48 @@ type GetOrderParams struct {
 	UserID      int64
 }
 
-func (q *Queries) GetOrder(ctx context.Context, arg GetOrderParams) (Order, error) {
+type GetOrderRow struct {
+	ID              int64
+	OrderNumber     string
+	UserID          int64
+	IdempotencyKey  *string
+	Status          string
+	Subtotal        int64
+	ShippingCost    int64
+	Discount        int64
+	Total           int64
+	AddressLabel    string
+	RecipientName   string
+	RecipientPhone  string
+	Province        string
+	City            string
+	District        string
+	Village         string
+	PostalCode      string
+	Address         string
+	Latitude        *float64
+	Longitude       *float64
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	PaymentDueAt    time.Time
+	PaidAt          *time.Time
+	CancelledAt     *time.Time
+	CancelReason    *string
+	StockRestoredAt *time.Time
+	CompletedAt     *time.Time
+	ConfirmedAt     *time.Time
+	Paid            bool
+	CourierName     *string
+	ServiceName     *string
+	TrackingNumber  *string
+	ShippedAt       *time.Time
+}
+
+// GetOrder also reads whether a PAID payment exists (returns need it) and
+// the manual shipment, so the detail page needs no extra round trip.
+func (q *Queries) GetOrder(ctx context.Context, arg GetOrderParams) (GetOrderRow, error) {
 	row := q.db.QueryRow(ctx, getOrder, arg.OrderNumber, arg.UserID)
-	var i Order
+	var i GetOrderRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrderNumber,
@@ -51,23 +96,58 @@ func (q *Queries) GetOrder(ctx context.Context, arg GetOrderParams) (Order, erro
 		&i.CancelReason,
 		&i.StockRestoredAt,
 		&i.CompletedAt,
+		&i.ConfirmedAt,
+		&i.Paid,
+		&i.CourierName,
+		&i.ServiceName,
+		&i.TrackingNumber,
+		&i.ShippedAt,
 	)
 	return i, err
 }
 
 const listOrderItems = `-- name: ListOrderItems :many
-SELECT id, order_id, product_id, variant_id, product_name, product_slug, sku, variant_label, image_url, unit_price, quantity, subtotal, created_at FROM order_items WHERE order_id = $1 ORDER BY id
+SELECT oi.id, oi.order_id, oi.product_id, oi.variant_id, oi.product_name, oi.product_slug, oi.sku, oi.variant_label, oi.image_url, oi.unit_price, oi.quantity, oi.subtotal, oi.created_at, r.id AS review_id,
+       coalesce((SELECT sum(coalesce(ri.approved_quantity, ri.quantity)) FROM return_items ri
+                 JOIN returns rt ON rt.id = ri.return_id
+                 WHERE ri.order_item_id = oi.id AND rt.status NOT IN ('REJECTED', 'CANCELLED')), 0)::int AS returned
+FROM order_items oi
+LEFT JOIN product_reviews r ON r.order_item_id = oi.id
+WHERE oi.order_id = $1
+ORDER BY oi.id
 `
 
-func (q *Queries) ListOrderItems(ctx context.Context, orderID int64) ([]OrderItem, error) {
+type ListOrderItemsRow struct {
+	ID           int64
+	OrderID      int64
+	ProductID    *int64
+	VariantID    *int64
+	ProductName  string
+	ProductSlug  string
+	Sku          string
+	VariantLabel string
+	ImageUrl     string
+	UnitPrice    int64
+	Quantity     int32
+	Subtotal     int64
+	CreatedAt    time.Time
+	ReviewID     *int64
+	Returned     int32
+}
+
+// ListOrderItems returns the lines with their review (if any) and the
+// quantity held by returns that still count (not rejected or cancelled;
+// the approved quantity once the shop reviewed the return). Order detail,
+// review and return actions all read this one query.
+func (q *Queries) ListOrderItems(ctx context.Context, orderID int64) ([]ListOrderItemsRow, error) {
 	rows, err := q.db.Query(ctx, listOrderItems, orderID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []OrderItem{}
+	items := []ListOrderItemsRow{}
 	for rows.Next() {
-		var i OrderItem
+		var i ListOrderItemsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrderID,
@@ -82,6 +162,8 @@ func (q *Queries) ListOrderItems(ctx context.Context, orderID int64) ([]OrderIte
 			&i.Quantity,
 			&i.Subtotal,
 			&i.CreatedAt,
+			&i.ReviewID,
+			&i.Returned,
 		); err != nil {
 			return nil, err
 		}

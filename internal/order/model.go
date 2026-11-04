@@ -100,6 +100,22 @@ type Item struct {
 	UnitPrice    int64
 	Quantity     int
 	Subtotal     int64
+
+	ReviewID int64 // the buyer's review of this line, 0 when none
+	Returned int   // units held by returns that still count
+}
+
+// Returnable is how many units of the line may still be returned.
+func (i Item) Returnable() int { return max(i.Quantity-i.Returned, 0) }
+
+// Shipment is the shipment the shop entered manually when it shipped the
+// order (no courier API, no live tracking).
+type Shipment struct {
+	Courier   string
+	Service   string
+	Tracking  string
+	Note      string
+	ShippedAt time.Time
 }
 
 type Order struct {
@@ -116,21 +132,30 @@ type Order struct {
 
 	PaymentDueAt time.Time  // pay before this, or the order is cancelled
 	PaidAt       *time.Time // payment confirmed by the provider
+	Paid         bool       // has a PAID payment (and paid_at)
+	ConfirmedAt  *time.Time // accepted by the shop (→ PROCESSING)
 	CancelledAt  *time.Time
-	CancelReason string // USER_CANCELLED | PAYMENT_EXPIRED
+	CancelReason string // USER_CANCELLED | PAYMENT_EXPIRED | ADMIN_CANCELLED
 	CompletedAt  *time.Time
+	Shipment     *Shipment // set once the shop shipped the order
 
 	Payments       []payment.Attempt // oldest first
 	PaymentEnabled bool              // online payment is configured
 	Sandbox        bool              // test payments only
 
-	// Completed orders only: reviewed items (order item → review) and returns.
-	Reviewed map[int64]int64
-	Returns  returns.OrderInfo
+	// Completed orders only: returns of the order and return eligibility.
+	Returns returns.OrderInfo
 }
 
 // ReviewID is the review of an order item, or 0.
-func (o Order) ReviewID(itemID int64) int64 { return o.Reviewed[itemID] }
+func (o Order) ReviewID(itemID int64) int64 {
+	for _, it := range o.Items {
+		if it.ID == itemID {
+			return it.ReviewID
+		}
+	}
+	return 0
+}
 
 // CanReview reports whether an item of a completed order still has no review.
 func (o Order) CanReview() bool { return o.FirstUnreviewed() != 0 }
@@ -142,11 +167,22 @@ func (o Order) FirstUnreviewed() int64 {
 		return 0
 	}
 	for _, it := range o.Items {
-		if o.Reviewed[it.ID] == 0 {
+		if it.ReviewID == 0 {
 			return it.ID
 		}
 	}
 	return 0
+}
+
+// Returnable reports whether some line still has units that may be
+// returned (the window and payment are checked by package returns).
+func (o Order) Returnable() bool {
+	for _, it := range o.Items {
+		if it.Returnable() > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // LastPayment is the latest payment attempt, or nil.
@@ -187,6 +223,11 @@ func (o Order) CancelReasonText() string {
 		return "Pesanan dibatalkan oleh Anda."
 	case "PAYMENT_EXPIRED":
 		return "Pesanan dibatalkan otomatis karena batas waktu pembayaran habis."
+	case "ADMIN_CANCELLED":
+		if o.Paid {
+			return "Pesanan dibatalkan oleh penjual. Dana yang sudah dibayar akan dikembalikan oleh toko."
+		}
+		return "Pesanan dibatalkan oleh penjual."
 	}
 	return "Pesanan dibatalkan."
 }

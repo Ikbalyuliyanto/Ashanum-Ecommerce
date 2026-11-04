@@ -24,7 +24,7 @@ func TestRegister(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u.ID == 0 || u.Email != "budi@example.com" || u.Role != RoleUser {
+	if u.ID == 0 || u.Email != "budi@example.com" || u.Role != RoleCustomer {
 		t.Errorf("unexpected user: %+v", u)
 	}
 

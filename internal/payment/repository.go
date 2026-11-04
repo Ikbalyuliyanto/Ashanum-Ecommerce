@@ -193,14 +193,18 @@ type restock struct {
 // its pending attempt as closeAs. The order row must already be locked;
 // variants are locked here in id order (as checkout does). The order
 // update is guarded by stock_restored_at, so stock is returned once only.
-func (r *Repository) CancelAndRestore(ctx context.Context, orderID int64, reason string, closeAs Status) (restock, error) {
+func (r *Repository) CancelAndRestore(ctx context.Context, orderID int64, reason string, closeAs Status, adminID int64) (restock, error) {
 	if !r.tx {
 		return restock{}, errors.New("payment: CancelAndRestore needs a transaction")
 	}
 	if _, err := r.q.LockOrderVariants(ctx, orderID); err != nil {
 		return restock{}, err
 	}
-	res, err := r.q.RestoreOrderStock(ctx, orderID)
+	p := dbgen.RestoreOrderStockParams{OrderID: orderID, Reason: reason}
+	if adminID != 0 {
+		p.AdminUserID = &adminID
+	}
+	res, err := r.q.RestoreOrderStock(ctx, p)
 	if err != nil {
 		return restock{}, err
 	}

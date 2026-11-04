@@ -1754,3 +1754,7 @@ body.page-checkout .main { padding-bottom: var(--space-4); }
 .evidence-list a { display: inline-flex; align-items: center; gap: 4px; }
 .rd-cancel { margin-top: var(--space-3); }
 .rd-cancel .sheet__panel p { margin: 0; font-size: 0.875rem; }
+
+/* ---------- Phase 8: shipment & moderation on buyer pages ---------- */
+.od-shipment-note { grid-column: 1 / -1; margin: 0; font-size: 0.8125rem; }
+.review-card__hidden { display: inline-block; margin-left: var(--space-2); padding: 0 var(--space-2); border-radius: 999px; background: #efede8; color: var(--muted); font-size: 0.75rem; font-weight: 600; }

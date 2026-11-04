@@ -50,7 +50,8 @@ func (r *Repository) List(ctx context.Context, userID int64, statuses []Status, 
 	return out, nil
 }
 
-// Get returns one order of the user with its items (two small queries).
+// Get returns one order of the user with its items, their reviews and
+// returned quantities, and the shipment (two queries).
 func (r *Repository) Get(ctx context.Context, userID int64, number string) (Order, error) {
 	row, err := r.q.GetOrder(ctx, dbgen.GetOrderParams{OrderNumber: number, UserID: userID})
 	if database.IsNoRows(err) {
@@ -70,6 +71,8 @@ func (r *Repository) Get(ctx context.Context, userID int64, number string) (Orde
 		CreatedAt:    row.CreatedAt,
 		PaymentDueAt: row.PaymentDueAt,
 		PaidAt:       row.PaidAt,
+		Paid:         row.Paid,
+		ConfirmedAt:  row.ConfirmedAt,
 		CancelledAt:  row.CancelledAt,
 		CompletedAt:  row.CompletedAt,
 		Address: Address{
@@ -89,13 +92,28 @@ func (r *Repository) Get(ctx context.Context, userID int64, number string) (Orde
 	if row.CancelReason != nil {
 		o.CancelReason = *row.CancelReason
 	}
-	items, err := r.q.ListOrderItems(ctx, row.ID)
-	if err != nil {
-		return Order{}, err
+	if row.CourierName != nil && row.ShippedAt != nil {
+		o.Shipment = &Shipment{Courier: *row.CourierName, Service: deref(row.ServiceName), Tracking: deref(row.TrackingNumber),
+			ShippedAt: *row.ShippedAt}
 	}
-	o.Items = make([]Item, len(items))
-	for i, it := range items {
-		o.Items[i] = Item{
+	var err2 error
+	if o.Items, err2 = r.Items(ctx, row.ID); err2 != nil {
+		return Order{}, err2
+	}
+	return o, nil
+}
+
+// Items lists an order's lines with the buyer's review and the quantity
+// held by returns (one query). The caller must already know the order is
+// one the reader may see.
+func (r *Repository) Items(ctx context.Context, orderID int64) ([]Item, error) {
+	rows, err := r.q.ListOrderItems(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]Item, len(rows))
+	for i, it := range rows {
+		items[i] = Item{
 			ID:           it.ID,
 			ProductID:    deref(it.ProductID),
 			VariantID:    deref(it.VariantID),
@@ -107,14 +125,17 @@ func (r *Repository) Get(ctx context.Context, userID int64, number string) (Orde
 			UnitPrice:    it.UnitPrice,
 			Quantity:     int(it.Quantity),
 			Subtotal:     it.Subtotal,
+			ReviewID:     deref(it.ReviewID),
+			Returned:     int(it.Returned),
 		}
 	}
-	return o, nil
+	return items, nil
 }
 
-func deref(p *int64) int64 {
+func deref[T any](p *T) T {
+	var zero T
 	if p == nil {
-		return 0
+		return zero
 	}
 	return *p
 }

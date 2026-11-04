@@ -7,9 +7,11 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"runtime"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -57,7 +59,8 @@ func NewService(repo *Repository, secret []byte) *Service {
 	}
 }
 
-// Register creates an account with the USER role. Invalid input returns
+// Register creates an account with the CUSTOMER role (the database
+// default; a role is never read from the form). Invalid input returns
 // validate.Errors; an existing email returns ErrEmailTaken.
 func (s *Service) Register(ctx context.Context, in RegisterInput) (User, error) {
 	errs := validate.Errors{}
@@ -78,6 +81,40 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (User, error) 
 		return User{}, err
 	}
 	return s.repo.CreateUser(ctx, email, hash)
+}
+
+// minAdminPassword is stricter than the customer minimum (8): an admin
+// account can change orders, stock and refunds.
+const minAdminPassword = 12
+
+// CreateAdmin creates an ADMIN account, or with in.Promote makes an existing
+// account ADMIN (password unchanged). The password is hashed and never
+// logged. Each grant is written to the admin audit log.
+func (s *Service) CreateAdmin(ctx context.Context, in AdminInput) (AdminResult, error) {
+	errs := validate.Errors{}
+	email, ok := validate.Email(in.Email)
+	if !ok {
+		errs.Add("email", "Masukkan alamat email yang valid.")
+	}
+	var hash string
+	if !in.Promote {
+		validate.Password(errs, "password", in.Password)
+		if _, bad := errs["password"]; !bad && utf8.RuneCountInString(in.Password) < minAdminPassword {
+			errs.Add("password", fmt.Sprintf("Password admin minimal %d karakter.", minAdminPassword))
+		}
+		validate.Name(errs, "first_name", in.FirstName, "Nama depan", true)
+		validate.Name(errs, "last_name", in.LastName, "Nama belakang", false)
+	}
+	if err := errs.Err(); err != nil {
+		return AdminResult{}, err
+	}
+	if !in.Promote {
+		var err error
+		if hash, err = s.hashPassword(ctx, in.Password); err != nil {
+			return AdminResult{}, err
+		}
+	}
+	return s.repo.CreateAdmin(ctx, email, hash, validate.Text(in.FirstName), validate.Text(in.LastName), in.Promote)
 }
 
 // Login checks credentials and starts a new session. Wrong email and wrong

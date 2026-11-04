@@ -15,6 +15,7 @@ const (
 
 	reasonUserCancelled  = "USER_CANCELLED"
 	reasonPaymentExpired = "PAYMENT_EXPIRED"
+	reasonAdminCancelled = "ADMIN_CANCELLED"
 )
 
 const (
@@ -38,6 +39,7 @@ const (
 	sourceStatusCheck = "status_check"
 	sourceReconcile   = "reconcile"
 	sourceSystem      = "system"
+	sourceAdmin       = "admin"
 )
 
 // decision is what applying a provider status to an attempt does.

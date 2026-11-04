@@ -7,22 +7,28 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"ecommerce/internal/address"
+	"ecommerce/internal/admin"
+	"ecommerce/internal/audit"
 	"ecommerce/internal/auth"
 	"ecommerce/internal/cart"
 	"ecommerce/internal/category"
 	"ecommerce/internal/checkout"
 	"ecommerce/internal/config"
+	"ecommerce/internal/fulfillment"
 	"ecommerce/internal/home"
+	"ecommerce/internal/inventory"
 	"ecommerce/internal/middleware"
 	"ecommerce/internal/order"
 	"ecommerce/internal/payment"
 	"ecommerce/internal/product"
+	"ecommerce/internal/report"
 	"ecommerce/internal/returns"
 	"ecommerce/internal/review"
 	"ecommerce/internal/user"
@@ -59,13 +65,15 @@ func NewRouter(d Deps) http.Handler {
 	})
 	reviewSvc := review.NewService(review.NewRepository(d.DB))
 	returnSvc := returns.NewService(returns.NewRepository(d.DB), returns.Options{WindowDays: d.Config.Returns.WindowDays})
-	orderSvc := order.NewService(order.NewRepository(d.DB), order.Deps{Payments: paymentSvc, Reviews: reviewSvc, Returns: returnSvc})
+	orderSvc := order.NewService(order.NewRepository(d.DB), order.Deps{Payments: paymentSvc, Returns: returnSvc})
 	checkoutSvc := checkout.NewService(checkout.NewRepository(d.DB), addressSvc)
+	inventorySvc := inventory.NewService(d.DB, d.Config.Inventory.LowStockThreshold)
 
-	// Header cart badge on full pages for signed-in users (one small query).
+	// Header cart badge on full pages for signed-in users (one small query);
+	// admin pages have no storefront header, so no query there.
 	d.View.SetCartCounter(func(r *http.Request) int {
 		p, ok := auth.FromContext(r.Context())
-		if !ok {
+		if !ok || strings.HasPrefix(r.URL.Path, "/admin") {
 			return 0
 		}
 		n, err := cartSvc.Count(r.Context(), p.UserID)
@@ -112,6 +120,27 @@ func NewRouter(d Deps) http.Handler {
 	reviewH.PublicRoutes(r)
 	authH.Routes(r)
 	paymentH.WebhookRoutes(r)
+
+	// Back office: signed-in ADMIN only. Guests go to the login page; any
+	// other account gets the ordinary 404, as if /admin did not exist.
+	adminH := admin.NewHandler(admin.Deps{
+		View:       d.View,
+		Log:        d.Log,
+		Orders:     fulfillment.NewService(d.DB, paymentSvc),
+		Products:   productSvc,
+		Categories: categorySvc,
+		Inventory:  inventorySvc,
+		Returns:    returnSvc,
+		Reviews:    reviewSvc,
+		Reports:    report.NewService(d.DB, inventorySvc),
+		Audit:      audit.NewService(d.DB),
+	})
+	r.Route("/admin", func(r chi.Router) {
+		r.Use(auth.RequireAdmin(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			d.View.Error(w, req, http.StatusNotFound)
+		})))
+		adminH.Routes(r)
+	})
 
 	r.Group(func(r chi.Router) {
 		r.Use(auth.RequireUser)

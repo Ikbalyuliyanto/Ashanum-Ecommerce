@@ -69,15 +69,20 @@ func (s *Service) Related(ctx context.Context, d Detail, limit int) ([]Card, err
 	return s.repo.Related(ctx, d.CategoryID, d.ID, limit)
 }
 
-// Create adds a product with images, attributes and variants (admin-ready;
-// the admin UI arrives in a later phase). Invalid input returns
-// validate.Errors.
+// Create adds a product with images, attributes and variants. Invalid
+// input returns validate.Errors.
 func (s *Service) Create(ctx context.Context, in Input) (int64, error) {
+	return s.create(ctx, 0, in)
+}
+
+// create validates and stores a product; adminID (0 for seed data and
+// tests) is recorded on the INITIAL_STOCK adjustments and the audit entry.
+func (s *Service) create(ctx context.Context, adminID int64, in Input) (int64, error) {
 	p, err := normalizeInput(in)
 	if err != nil {
 		return 0, err
 	}
-	id, err := s.repo.Create(ctx, p)
+	id, err := s.repo.Create(ctx, p, adminID)
 	switch {
 	case errors.Is(err, errSlugTaken):
 		return 0, validate.Errors{"slug": "Slug sudah dipakai produk lain."}

@@ -87,8 +87,10 @@ ORDER BY v.id
 FOR UPDATE OF v;
 
 -- RestoreOrderStock gives the order's quantities back to their variants
--- (call LockOrderVariants first). Lines whose variant was deleted have no
--- stock to return; they are counted as missing.
+-- (call LockOrderVariants first) and records each change as an
+-- ORDER_RESTORE inventory adjustment. Lines whose variant was deleted have
+-- no stock to return; they are counted as missing. admin_user_id is set
+-- when an admin cancelled the order.
 -- name: RestoreOrderStock :one
 WITH items AS (
     SELECT oi.variant_id, sum(oi.quantity)::int AS quantity
@@ -99,10 +101,18 @@ WITH items AS (
     UPDATE product_variants v SET stock = v.stock + i.quantity
     FROM items i
     WHERE v.id = i.variant_id
-    RETURNING v.id
+    RETURNING v.id, v.sku, v.stock, i.quantity
+), logged AS (
+    INSERT INTO inventory_adjustments (variant_id, sku, type, quantity_delta, stock_before, stock_after,
+                                       reason, reference_type, reference_id, admin_user_id)
+    SELECT r.id, r.sku, 'ORDER_RESTORE', r.quantity, r.stock - r.quantity, r.stock,
+           @reason::text, 'ORDER', @order_id, sqlc.narg('admin_user_id')::bigint
+    FROM restored r
+    RETURNING id
 )
 SELECT (SELECT count(*) FROM items)::int    AS variants,
        (SELECT count(*) FROM restored)::int AS restored,
+       (SELECT count(*) FROM logged)::int   AS logged,
        (SELECT count(*) FROM order_items oi
         WHERE oi.order_id = @order_id AND oi.variant_id IS NULL)::int AS missing;
 

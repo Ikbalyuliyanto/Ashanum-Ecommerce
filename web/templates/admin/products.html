@@ -1,0 +1,56 @@
+{{define "adm-title"}}Produk{{end}}
+{{template "admin" .}}
+{{define "admin-content"}}
+{{$p := .Data.Page}}{{$pg := .Data.Pager}}
+<section id="list-area" class="adm-section" hx-target="#list-area" hx-select="#list-area" hx-swap="outerHTML">
+  <div class="adm-head">
+    <h1>Produk</h1>
+    <a class="btn btn--primary btn--sm" href="/admin/products/new" hx-boost="false">{{icon "plus"}} Tambah Produk</a>
+  </div>
+  <form class="adm-filter" hx-boost="true" action="/admin/products" method="get" role="search"
+        hx-get="/admin/products" hx-trigger="change from:select, submit" hx-push-url="true">
+    <label class="visually-hidden" for="q">Cari nama atau SKU</label>
+    <input class="input" id="q" type="search" name="q" value="{{$p.Filter.Query}}" placeholder="Cari nama atau SKU" maxlength="100">
+    <label class="visually-hidden" for="category">Kategori</label>
+    <select class="select" id="category" name="category">
+      <option value="">Semua kategori</option>
+      {{range .Data.Categories}}<option value="{{.ID}}"{{if eq .ID $p.Filter.CategoryID}} selected{{end}}>{{.Name}}{{if not .Active}} (nonaktif){{end}}</option>{{end}}
+    </select>
+    <label class="visually-hidden" for="status">Status</label>
+    <select class="select" id="status" name="status">
+      <option value="">Semua status</option>
+      <option value="active"{{if eq $p.Filter.Status "active"}} selected{{end}}>Aktif</option>
+      <option value="inactive"{{if eq $p.Filter.Status "inactive"}} selected{{end}}>Nonaktif</option>
+    </select>
+    <button class="btn btn--sm" type="submit">{{icon "search"}} Cari</button>
+  </form>
+
+  {{if $p.Products}}
+  <div class="adm-table-wrap">
+  <table class="adm-table">
+    <thead><tr><th>Produk</th><th>Kategori</th><th class="num">Harga</th><th class="num">Stok</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+    {{range $p.Products}}
+      <tr>
+        <td data-label="Produk">
+          <div class="adm-prod">
+            {{if .ImageURL}}<img src="{{img .ImageURL 80}}" alt="" width="40" height="40" loading="lazy">{{else}}<span class="adm-prod__ph">{{icon "package"}}</span>{{end}}
+            <span><a class="adm-strong" href="/admin/products/{{.ID}}/edit" hx-boost="false">{{.Name}}</a><span class="muted">{{.VariantCount}} varian{{with .Brand}} · {{.}}{{end}}</span></span>
+          </div>
+        </td>
+        <td data-label="Kategori">{{.CategoryName}}{{if not .CategoryActive}} <span class="adm-badge adm-badge--muted">kategori nonaktif</span>{{end}}</td>
+        <td data-label="Harga" class="num">{{if .Price}}{{rupiah .Price}}{{if gt .PriceMax .Price}}–{{rupiah .PriceMax}}{{end}}{{else}}<span class="muted">—</span>{{end}}</td>
+        <td data-label="Stok" class="num">{{if .Stock}}{{.Stock}}{{else}}<span class="adm-badge adm-badge--danger">habis</span>{{end}}</td>
+        <td data-label="Status">{{if .Active}}<span class="adm-badge adm-badge--ok">Aktif</span>{{else}}<span class="adm-badge adm-badge--muted">Nonaktif</span>{{end}}</td>
+        <td><a class="btn btn--sm" href="/admin/products/{{.ID}}/edit" hx-boost="false">{{icon "edit"}} Ubah</a></td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+  {{template "adm-pager" $pg}}
+  {{else}}
+  <p class="adm-empty">Tidak ada produk{{with $p.Filter.Query}} untuk “{{.}}”{{end}}.</p>
+  {{end}}
+</section>
+{{end}}

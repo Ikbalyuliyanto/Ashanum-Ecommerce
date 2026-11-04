@@ -167,3 +167,13 @@ func Slug(s string) string {
 
 // IsSlug reports whether s is already a valid slug of at most 120 bytes.
 func IsSlug(s string) bool { return s != "" && len(s) <= 120 && Slug(s) == s }
+
+// SearchText normalizes a search box value: single spaces, at most 100
+// characters.
+func SearchText(s string) string {
+	s = Text(s)
+	if r := []rune(s); len(r) > 100 {
+		s = string(r[:100])
+	}
+	return s
+}
