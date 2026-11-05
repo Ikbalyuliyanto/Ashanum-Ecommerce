@@ -19,7 +19,8 @@ dilakukan per fase.
 | 6 | Pembayaran Midtrans Snap (**sandbox saja**), webhook, kedaluwarsa & pembatalan pesanan, pengembalian stok, reconcile | Selesai |
 | 7 | Ulasan & rating, pengajuan pengembalian (refund/tukar barang), bukti (URL), status retur, fondasi domain refund | Selesai |
 | 8 | Admin (role & otorisasi), dashboard, produk/kategori/varian/stok, fulfillment pesanan, retur & refund (administratif), moderasi ulasan, laporan, audit log | Selesai |
-| 9 | Security review, optimasi, load testing, deployment HG680P | Belum |
+| 9 | REST API v1 untuk mobile: access + refresh token (rotasi), akun, alamat, katalog, keranjang, checkout, pesanan, pembayaran, ulasan, retur, dokumentasi | Selesai |
+| 10+ | Security review, load testing, deployment HG680P, integrasi pengiriman, Midtrans produksi (belum dijadwalkan) | Belum |
 
 ## Stack
 
@@ -51,6 +52,7 @@ semuanya dibaca dari binary (embed).
 | `ecommerce create-admin -email E -first-name N [-last-name N] [-promote]` | Buat akun admin (password dibaca dari stdin, bukan flag); `-promote` menjadikan akun yang sudah ada admin |
 | `ecommerce recalculate-ratings` | Perbaiki cache rating produk dari `product_reviews` (alat perbaikan) |
 | `ecommerce reconcile-payments [-limit N]` | Sinkronkan pembayaran pending dengan Midtrans, batalkan pesanan lewat batas bayar (stok kembali), daftar pembayaran yang perlu ditinjau |
+| `ecommerce cleanup-api-sessions` | Hapus sesi API (mobile) yang kedaluwarsa/dicabut; untuk cron/systemd timer |
 | `ecommerce version` | Versi build |
 
 `Makefile` menyediakan pintasan (`make run`, `make test`, `make build-arm64`, ...).
@@ -169,6 +171,26 @@ langkah retur setelah pengajuan juga dikerjakan admin.
 Batas pengajuan pengembalian: `RETURN_WINDOW_DAYS` (default 7) hari setelah
 `orders.completed_at` — kebijakan bisnis yang bisa diubah, bukan aturan tetap.
 
+### REST API untuk mobile (Fase 9)
+
+Semua di `/api/v1`, JSON, memakai service yang sama dengan web. Dokumentasi lengkap:
+[docs/api-v1.md](docs/api-v1.md), kontrak mesin [docs/openapi.yaml](docs/openapi.yaml)
+(dokumen saja, tanpa server Swagger), alur aplikasi [docs/mobile-flow.md](docs/mobile-flow.md).
+
+- Auth: `POST /auth/register|login|refresh|logout`, `/auth/logout-all`; Bearer access
+  token (default 15 menit) + refresh token berotasi (default 30 hari) dengan deteksi reuse.
+- Akun: `/me`, `/me/profile`, `/me/addresses`. Katalog publik: `/categories`, `/home`,
+  `/products` (cari/filter/sort/paginasi), `/products/{slug}`, `/products/{slug}/reviews`.
+- Belanja: `/cart`, `/checkout/preview`, `/orders` (idempotent), `/orders/{nomor}`
+  (`/cancel`, `/payment`). Purna jual: `/me/reviews`, `/reviews`, `/me/returns`, `/returns`.
+
+| Variabel | Default | Keterangan |
+|---|---|---|
+| `API_ACCESS_TOKEN_TTL` | `15m` | Umur access token (1m–24h) |
+| `API_REFRESH_TOKEN_TTL` | `30d` | Umur refresh token, bergeser tiap rotasi (1h–365d) |
+| `API_CORS_ALLOWED_ORIGINS` | kosong | Origin browser yang boleh (persis, dipisah koma; `*` ditolak). Kosong = tertutup |
+| `API_PAYMENT_FINISH_URL` | kosong | App link tujuan kembali dari Midtrans (`{order_number}` diganti). Kosong = halaman finish web |
+
 ### Admin (Fase 8)
 
 Tidak ada admin bawaan atau password default. Buat admin pertama di server:
@@ -272,13 +294,14 @@ internal/fulfillment/        alur pesanan admin: konfirmasi, kirim (manual), sel
 internal/inventory/          penyesuaian stok + jejak inventory_adjustments
 internal/report/             dashboard & laporan (SQL agregat)
 internal/audit/              admin audit log (append-only)
+internal/api/                REST API /api/v1 (JSON, Bearer token) di atas service yang sama
 internal/validate/           aturan validasi input bersama (email, HP, nama, password)
 internal/database/dbgen/     kode hasil sqlc (jangan diedit manual)
 internal/testutil/           schema PostgreSQL terisolasi untuk test
 web/templates/               layouts/, partials/, <modul>/, errors/
 web/static/                  css/, js/, icons/, img/ (placeholder)
 scripts/seeddemo/            pengisi data demo untuk development
-docs/                        blueprint, rencana kode wilayah alamat (Phase 5)
+docs/                        blueprint, rencana kode wilayah alamat, api-v1.md, openapi.yaml, mobile-flow.md
 deploy/nginx/                konfigurasi Nginx + real IP Cloudflare
 deploy/systemd/              unit systemd
 ```
@@ -508,6 +531,17 @@ dibatalkan ditampilkan terpisah. Hari dihitung dalam WIB. Semua angka dari SQL a
 transaksi yang sama dengan aksinya; trigger menolak UPDATE/DELETE. Metadata berisi status,
 jumlah, catatan — tidak pernah password, token, atau kunci.
 
+**Sesi API (mobile).** Transport terpisah dari cookie web. Tabel `api_sessions`
+menyimpan **HMAC** access token dan refresh token (256-bit acak, prefix `ashat_`/`ashrt_`),
+bukan plaintext. Satu request API = satu query terindeks (token → sesi + user). Refresh
+merotasi pasangan token dalam satu transaksi; refresh token yang sudah dirotasi dan dipakai
+lagi mencabut seluruh family perangkat (`REFRESH_TOKEN_REUSED`). Logout API tidak menyentuh
+sesi web dan sebaliknya. `LoadSession` web tidak berjalan di `/api/`, API tidak membaca
+cookie, sehingga `/api/v1/` dikecualikan dari cek same-origin (CSRF) tanpa melemahkan web.
+Rate limit login/register/refresh di memori (satu instance). Request JSON ketat: wajib
+`application/json`, maks. 64 KiB, field tak dikenal ditolak; error memakai kontrak
+`{"error":{code,message,fields}}` tanpa detail internal.
+
 **Role.** `CUSTOMER` (default registrasi; role tidak pernah dibaca dari form) dan
 `ADMIN`. Migrasi 0009 mengganti nama nilai lama `USER` menjadi `CUSTOMER`.
 
@@ -523,6 +557,9 @@ Nama kategori ikut dicocokkan. Tanpa Elasticsearch atau layanan eksternal.
 **Template.** Halaman `web/templates/<modul>/<nama>.html` dirender dengan nama
 `"<modul>/<nama>"`, memilih layout lewat `{{template "base" .}}` dan mengisi blok
 `title`/`content`. Data dari handler tersedia di `.Data`, info aplikasi di `.App`.
+Setiap halaman hanya memuat file layout/partial yang benar-benar dipanggilnya (closure
+`{{template}}`, lihat `internal/view/deps.go`), bukan salinan semua file bersama: memori
+template turun ±57% (7,2 → 3,1 MB) tanpa cache tambahan; template tetap embedded.
 Untuk respons HTMX parsial gunakan `view.Fragment(...)` dengan nama blok `{{define}}`.
 
 **Content Security Policy** hanya mengizinkan script/style dari domain sendiri, jadi:

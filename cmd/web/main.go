@@ -13,6 +13,8 @@
 //	                          create an admin account (password read from
 //	                          stdin, never from a flag); -promote makes an
 //	                          existing account admin instead
+//	ecommerce cleanup-api-sessions
+//	                          delete expired / revoked mobile API sessions
 //	ecommerce version         print the build version
 package main
 
@@ -82,8 +84,10 @@ func run(args []string) error {
 		return recalculateRatings(ctx, cfg)
 	case "create-admin":
 		return createAdmin(ctx, cfg, args)
+	case "cleanup-api-sessions":
+		return cleanupAPISessions(ctx, cfg)
 	default:
-		return fmt.Errorf("unknown command %q (want serve, migrate, reconcile-payments, recalculate-ratings, create-admin, version)", cmd)
+		return fmt.Errorf("unknown command %q (want serve, migrate, reconcile-payments, recalculate-ratings, create-admin, cleanup-api-sessions, version)", cmd)
 	}
 }
 
@@ -226,6 +230,23 @@ func recalculateRatings(ctx context.Context, cfg *config.Config) error {
 		return err
 	}
 	fmt.Printf("products repaired: %d\n", n)
+	return nil
+}
+
+// cleanupAPISessions deletes API sessions past their refresh expiry and
+// revoked ones older than a day. Logins already purge expired sessions
+// lazily; this is for a systemd timer or cron, not a resident worker.
+func cleanupAPISessions(ctx context.Context, cfg *config.Config) error {
+	db, err := database.Open(ctx, cfg.Database)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	n, err := auth.NewService(auth.NewRepository(db), cfg.Session.Secret).CleanupAPISessions(ctx)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("api sessions deleted: %d\n", n)
 	return nil
 }
 

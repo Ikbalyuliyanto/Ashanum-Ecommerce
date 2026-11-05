@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadDotEnvDoesNotOverride(t *testing.T) {
@@ -193,5 +194,45 @@ func TestLowStockConfig(t *testing.T) {
 		if _, err := Load(); err == nil {
 			t.Errorf("LOW_STOCK_THRESHOLD=%s accepted", bad)
 		}
+	}
+}
+
+func TestAPIConfig(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("DATABASE_URL", "postgres://u:p@db:5432/shop")
+	for _, k := range []string{"API_ACCESS_TOKEN_TTL", "API_REFRESH_TOKEN_TTL", "API_CORS_ALLOWED_ORIGINS", "API_PAYMENT_FINISH_URL"} {
+		t.Setenv(k, "")
+	}
+	cfg, err := Load()
+	if err != nil || cfg.API.AccessTTL != 15*time.Minute || cfg.API.RefreshTTL != 30*24*time.Hour || len(cfg.API.CORSOrigins) != 0 {
+		t.Fatalf("defaults: %v %+v", err, cfg.API)
+	}
+	t.Setenv("API_ACCESS_TOKEN_TTL", "10m")
+	t.Setenv("API_REFRESH_TOKEN_TTL", "14d")
+	t.Setenv("API_CORS_ALLOWED_ORIGINS", "http://localhost:5173, https://admin.example/")
+	t.Setenv("API_PAYMENT_FINISH_URL", "ashanum://payment/finish?order={order_number}")
+	cfg, err = Load()
+	if err != nil || cfg.API.AccessTTL != 10*time.Minute || cfg.API.RefreshTTL != 14*24*time.Hour ||
+		len(cfg.API.CORSOrigins) != 2 || cfg.API.CORSOrigins[1] != "https://admin.example" {
+		t.Fatalf("custom: %v %+v", err, cfg.API)
+	}
+	bad := map[string]string{
+		"API_ACCESS_TOKEN_TTL":     "10s",
+		"API_REFRESH_TOKEN_TTL":    "5m",
+		"API_CORS_ALLOWED_ORIGINS": "*",
+		"API_PAYMENT_FINISH_URL":   "javascript:alert(1)",
+	}
+	for k, v := range bad {
+		t.Run(k, func(t *testing.T) {
+			t.Setenv(k, v)
+			if _, err := Load(); err == nil {
+				t.Errorf("%s=%s accepted", k, v)
+			}
+		})
+	}
+	t.Setenv("API_CORS_ALLOWED_ORIGINS", "https://a.example/path")
+	if _, err := Load(); err == nil {
+		t.Error("an origin with a path accepted")
 	}
 }

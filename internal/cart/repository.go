@@ -133,6 +133,9 @@ func (r *Repository) Items(ctx context.Context, userID int64) ([]Item, error) {
 			Price:         deref(row.Price),
 			OriginalPrice: deref(row.OriginalPrice),
 		}
+		if row.ProductID != nil {
+			it.ProductID = *row.ProductID
+		}
 		if row.VariantID != nil {
 			it.VariantID = *row.VariantID
 		}

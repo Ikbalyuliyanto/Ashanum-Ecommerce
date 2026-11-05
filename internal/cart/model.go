@@ -82,6 +82,7 @@ const (
 type Item struct {
 	ID            int64
 	VariantID     int64 // 0 when the variant was deleted
+	ProductID     int64 // 0 when the variant was deleted
 	SKU           string
 	ProductName   string
 	ProductSlug   string

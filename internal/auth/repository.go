@@ -118,3 +118,120 @@ func (r *Repository) CreateAdmin(ctx context.Context, email, hash, first, last s
 	})
 	return res, err
 }
+
+// InTx runs fn on a repository bound to one transaction.
+func (r *Repository) InTx(ctx context.Context, fn func(tx *Repository) error) error {
+	b, ok := r.db.(interface {
+		Begin(context.Context) (pgx.Tx, error)
+	})
+	if !ok {
+		return errors.New("auth: transactions need a connection pool")
+	}
+	return pgx.BeginFunc(ctx, b, func(tx pgx.Tx) error { return fn(&Repository{db: tx, q: r.q.WithTx(tx)}) })
+}
+
+// apiSessionRow is one token pair to store (hashes only).
+type apiSessionRow struct {
+	UserID         int64
+	FamilyID       int64 // 0 starts a new family
+	AccessHash     []byte
+	RefreshHash    []byte
+	AccessExpires  time.Time
+	RefreshExpires time.Time
+	Device         string
+}
+
+func (r *Repository) CreateAPISession(ctx context.Context, s apiSessionRow) (int64, error) {
+	p := dbgen.CreateAPISessionParams{UserID: s.UserID, AccessTokenHash: s.AccessHash, RefreshTokenHash: s.RefreshHash,
+		AccessExpiresAt: s.AccessExpires, RefreshExpiresAt: s.RefreshExpires, DeviceName: s.Device}
+	if s.FamilyID != 0 {
+		p.FamilyID = &s.FamilyID
+	}
+	row, err := r.q.CreateAPISession(ctx, p)
+	return row.FamilyID, err
+}
+
+// apiAccess is a session found by its access token.
+type apiAccess struct {
+	ID              int64
+	FamilyID        int64
+	AccessExpiresAt time.Time
+	LastUsedAt      time.Time
+	RotatedAt       *time.Time
+	RevokedAt       *time.Time
+	Principal       Principal
+}
+
+func (r *Repository) APISessionByAccess(ctx context.Context, hash []byte) (apiAccess, error) {
+	row, err := r.q.APISessionByAccess(ctx, hash)
+	if database.IsNoRows(err) {
+		return apiAccess{}, ErrInvalidToken
+	}
+	if err != nil {
+		return apiAccess{}, err
+	}
+	return apiAccess{ID: row.ID, FamilyID: row.FamilyID, AccessExpiresAt: row.AccessExpiresAt, LastUsedAt: row.LastUsedAt,
+		RotatedAt: row.RotatedAt, RevokedAt: row.RevokedAt,
+		Principal: Principal{UserID: row.UserID, Email: row.Email, Role: Role(row.Role)}}, nil
+}
+
+func (r *Repository) TouchAPISession(ctx context.Context, id int64) error {
+	return r.q.TouchAPISession(ctx, id)
+}
+
+// apiRefresh is a session locked by its refresh token.
+type apiRefresh struct {
+	ID               int64
+	UserID           int64
+	FamilyID         int64
+	RefreshExpiresAt time.Time
+	RotatedAt        *time.Time
+	RevokedAt        *time.Time
+	Device           string
+}
+
+func (r *Repository) LockAPISessionByRefresh(ctx context.Context, hash []byte) (apiRefresh, error) {
+	row, err := r.q.LockAPISessionByRefresh(ctx, hash)
+	if database.IsNoRows(err) {
+		return apiRefresh{}, ErrInvalidToken
+	}
+	if err != nil {
+		return apiRefresh{}, err
+	}
+	return apiRefresh{ID: row.ID, UserID: row.UserID, FamilyID: row.FamilyID, RefreshExpiresAt: row.RefreshExpiresAt,
+		RotatedAt: row.RotatedAt, RevokedAt: row.RevokedAt, Device: row.DeviceName}, nil
+}
+
+func (r *Repository) RotateAPISession(ctx context.Context, id int64) (bool, error) {
+	n, err := r.q.RotateAPISession(ctx, id)
+	return n == 1, err
+}
+
+func (r *Repository) RevokeAPIFamily(ctx context.Context, familyID int64, reason string) error {
+	_, err := r.q.RevokeAPIFamily(ctx, dbgen.RevokeAPIFamilyParams{FamilyID: familyID, Reason: &reason})
+	return err
+}
+
+func (r *Repository) RevokeUserAPISessions(ctx context.Context, userID int64) (int64, error) {
+	return r.q.RevokeUserAPISessions(ctx, userID)
+}
+
+func (r *Repository) DeleteExpiredAPISessions(ctx context.Context) error {
+	_, err := r.q.DeleteExpiredAPISessions(ctx)
+	return err
+}
+
+func (r *Repository) DeleteStaleAPISessions(ctx context.Context) (int64, error) {
+	return r.q.DeleteStaleAPISessions(ctx)
+}
+
+func (r *Repository) UserByID(ctx context.Context, id int64) (User, error) {
+	row, err := r.q.UserByID(ctx, id)
+	if database.IsNoRows(err) {
+		return User{}, errUserNotFound
+	}
+	if err != nil {
+		return User{}, err
+	}
+	return User{ID: row.ID, Email: row.Email, Role: Role(row.Role), CreatedAt: row.CreatedAt}, nil
+}

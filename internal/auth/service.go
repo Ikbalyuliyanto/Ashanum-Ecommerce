@@ -35,6 +35,10 @@ type Service struct {
 	secret []byte
 	now    func() time.Time
 
+	// API token lifetimes (ConfigureAPI).
+	accessTTL  time.Duration
+	refreshTTL time.Duration
+
 	// hashSlots caps concurrent bcrypt work so a burst of logins cannot
 	// take every CPU core from page rendering.
 	hashSlots chan struct{}
@@ -45,10 +49,12 @@ type Service struct {
 
 func NewService(repo *Repository, secret []byte) *Service {
 	return &Service{
-		repo:      repo,
-		secret:    secret,
-		now:       time.Now,
-		hashSlots: make(chan struct{}, max(1, runtime.NumCPU()/2)),
+		repo:       repo,
+		secret:     secret,
+		now:        time.Now,
+		accessTTL:  DefaultAccessTTL,
+		refreshTTL: DefaultRefreshTTL,
+		hashSlots:  make(chan struct{}, max(1, runtime.NumCPU()/2)),
 		dummyHash: sync.OnceValue(func() []byte {
 			h, err := bcrypt.GenerateFromPassword([]byte("ashanum-timing-equalizer"), bcryptCost)
 			if err != nil {
@@ -120,30 +126,22 @@ func (s *Service) CreateAdmin(ctx context.Context, in AdminInput) (AdminResult, 
 // Login checks credentials and starts a new session. Wrong email and wrong
 // password both return ErrInvalidCredentials.
 func (s *Service) Login(ctx context.Context, email, password string) (User, Session, error) {
-	email, ok := validate.Email(email)
-	if !ok || password == "" || len(password) > 72 {
-		return User{}, Session{}, ErrInvalidCredentials
-	}
-
-	u, hash, err := s.repo.FindCredentials(ctx, email)
-	if errors.Is(err, errUserNotFound) {
-		s.comparePassword(ctx, s.dummyHash(), password)
-		return User{}, Session{}, ErrInvalidCredentials
-	}
+	u, err := s.VerifyCredentials(ctx, email, password)
 	if err != nil {
 		return User{}, Session{}, err
 	}
-
-	switch err := s.comparePassword(ctx, []byte(hash), password); {
-	case errors.Is(err, bcrypt.ErrMismatchedHashAndPassword):
-		return User{}, Session{}, ErrInvalidCredentials
-	case err != nil:
-		return User{}, Session{}, err
-	}
-
 	sess, err := s.StartSession(ctx, u.ID)
 	return u, sess, err
 }
+
+// normalizeLogin returns the normalized email, or false for input that can
+// never match an account (checked before any bcrypt work).
+func normalizeLogin(email, password string) (string, bool) {
+	email, ok := validate.Email(email)
+	return email, ok && password != "" && len(password) <= 72
+}
+
+func isMismatch(err error) bool { return errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) }
 
 // StartSession issues a fresh random token for a user (after login or
 // registration). Expired sessions are purged here instead of by a

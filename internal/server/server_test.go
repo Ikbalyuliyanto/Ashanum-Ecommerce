@@ -33,6 +33,13 @@ func buildRouter(t *testing.T, db *pgxpool.Pool, env string) http.Handler {
 // and its checkout origin.
 func buildRouterWith(t *testing.T, db *pgxpool.Pool, env string, provider payment.Provider, checkoutOrigin string) http.Handler {
 	t.Helper()
+	return buildRouterCfg(t, db, env, provider, checkoutOrigin, nil)
+}
+
+// buildRouterCfg is buildRouterWith with a hook to adjust the configuration
+// (API settings in the API tests).
+func buildRouterCfg(t *testing.T, db *pgxpool.Pool, env string, provider payment.Provider, checkoutOrigin string, mod func(*config.Config)) http.Handler {
+	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	tpl, _ := fs.Sub(web.FS, "templates")
 	static, _ := fs.Sub(web.FS, "static")
@@ -51,9 +58,13 @@ func buildRouterWith(t *testing.T, db *pgxpool.Pool, env string, provider paymen
 	if err != nil {
 		t.Fatal(err)
 	}
+	cfg := &config.Config{Env: env, Session: config.Session{Secret: []byte("0123456789abcdef0123456789abcdef")},
+		Midtrans: config.Midtrans{Env: config.MidtransSandbox}}
+	if mod != nil {
+		mod(cfg)
+	}
 	return NewRouter(Deps{
-		Config: &config.Config{Env: env, Session: config.Session{Secret: []byte("0123456789abcdef0123456789abcdef")},
-			Midtrans: config.Midtrans{Env: config.MidtransSandbox}},
+		Config:          cfg,
 		Log:             log,
 		DB:              db,
 		View:            renderer,

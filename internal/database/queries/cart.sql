@@ -86,7 +86,7 @@ WHERE c.user_id = @user_id AND c.active;
 -- stock, and availability flags. LEFT JOINs keep lines whose variant was
 -- deleted.
 -- name: ListCartItems :many
-SELECT ci.id, ci.quantity, ci.variant_id,
+SELECT ci.id, ci.quantity, ci.variant_id, v.product_id,
        v.sku, v.price, v.original_price, v.stock,
        coalesce(v.active AND p.active AND cat.active, false)::boolean AS available,
        p.name AS product_name, p.slug AS product_slug,

@@ -19,6 +19,10 @@ type Options struct {
 	// BaseURL is the public site URL (no trailing slash) used for the
 	// provider's "finish" redirect; "" leaves it to the provider dashboard.
 	BaseURL string
+	// AppFinishURL is the finish redirect for payments started from the
+	// mobile API (an app link; {order_number} is replaced). Server config
+	// only, never from a client. "" uses the web finish page.
+	AppFinishURL string
 	// Sandbox marks test payments (no real money), shown in the UI.
 	Sandbox bool
 	Log     *slog.Logger
@@ -72,6 +76,17 @@ func (s *Service) Attempts(ctx context.Context, orderID int64) ([]Attempt, error
 // same checkout; otherwise it creates attempt n+1 with a new provider order
 // ID. The amount is always orders.total, never a browser value.
 func (s *Service) Pay(ctx context.Context, userID int64, number string) (string, error) {
+	return s.pay(ctx, userID, number, false)
+}
+
+// PayFromApp is Pay for the mobile API: same attempts, amounts and state
+// machine; only the provider's finish redirect points at the configured app
+// link. A pending attempt started on the web is reused as it is.
+func (s *Service) PayFromApp(ctx context.Context, userID int64, number string) (string, error) {
+	return s.pay(ctx, userID, number, true)
+}
+
+func (s *Service) pay(ctx context.Context, userID int64, number string, app bool) (string, error) {
 	if s.provider == nil {
 		return "", ErrNotConfigured
 	}
@@ -163,7 +178,7 @@ func (s *Service) Pay(ctx context.Context, userID int64, number string) (string,
 		Customer:        Customer{Name: o.Recipient, Email: o.Email, Phone: o.Phone},
 		Start:           start,
 		ExpiresAt:       expires,
-		FinishURL:       s.finishURL(o.Number),
+		FinishURL:       s.finishURL(o.Number, app),
 	})
 	if err != nil {
 		s.opts.Log.Warn("payment: create transaction failed", "order", o.Number, "attempt", a.No,
@@ -633,7 +648,10 @@ func (s *Service) inTx(ctx context.Context, fn func(tx *Repository) error) error
 	return err
 }
 
-func (s *Service) finishURL(number string) string {
+func (s *Service) finishURL(number string, app bool) string {
+	if app && s.opts.AppFinishURL != "" {
+		return strings.ReplaceAll(s.opts.AppFinishURL, "{order_number}", url.QueryEscape(number))
+	}
 	if s.opts.BaseURL == "" {
 		return ""
 	}

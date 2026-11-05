@@ -104,10 +104,18 @@ func (r *Renderer) funcs() template.FuncMap {
 	}
 }
 
+// parse builds one template set per page. A set holds the page and only the
+// layout/partial files it needs — the files defining every template the
+// page calls, transitively ({{template}} and {{block}} names are static) —
+// instead of a clone of every shared file: html/template copies each
+// shared tree into every set, so storefront pages no longer carry the
+// admin layout and admin pages no longer carry the storefront header,
+// footer and cards. Rendering is unchanged.
 func (r *Renderer) parse() (map[string]*template.Template, error) {
-	shared, err := template.New("").Funcs(r.funcs()).ParseFS(r.cfg.FS, "layouts/*.html", "partials/*.html")
+	funcs := r.funcs()
+	shared, definedIn, err := sharedFiles(r.cfg.FS, funcs)
 	if err != nil {
-		return nil, fmt.Errorf("view: parse layouts/partials: %w", err)
+		return nil, err
 	}
 
 	pages := make(map[string]*template.Template)
@@ -123,10 +131,16 @@ func (r *Renderer) parse() (map[string]*template.Template, error) {
 		if err != nil {
 			return err
 		}
-		name := strings.TrimSuffix(p, ".html")
-		t, err := shared.Clone()
+		_, calls, err := scanTemplates(p, string(src), funcs)
 		if err != nil {
-			return err
+			return fmt.Errorf("view: parse %s: %w", p, err)
+		}
+		name := strings.TrimSuffix(p, ".html")
+		t := template.New("").Funcs(funcs)
+		for _, i := range closure(calls, shared, definedIn) {
+			if _, err := t.New(shared[i].path).Parse(shared[i].src); err != nil {
+				return fmt.Errorf("view: parse %s: %w", shared[i].path, err)
+			}
 		}
 		if _, err := t.New("page:" + name).Parse(string(src)); err != nil {
 			return fmt.Errorf("view: parse %s: %w", p, err)

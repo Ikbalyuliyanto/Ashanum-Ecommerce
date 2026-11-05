@@ -19,6 +19,22 @@ type AdminAuditLog struct {
 	CreatedAt   time.Time
 }
 
+type ApiSession struct {
+	ID               int64
+	UserID           int64
+	FamilyID         int64
+	AccessTokenHash  []byte
+	RefreshTokenHash []byte
+	AccessExpiresAt  time.Time
+	RefreshExpiresAt time.Time
+	DeviceName       string
+	LastUsedAt       time.Time
+	RotatedAt        *time.Time
+	RevokedAt        *time.Time
+	RevokedReason    *string
+	CreatedAt        time.Time
+}
+
 type Cart struct {
 	ID        int64
 	UserID    int64

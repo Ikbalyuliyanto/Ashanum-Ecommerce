@@ -13,7 +13,10 @@ import (
 // guest; protected routes then send the user to the login page.
 func (h *Handler) LoadSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if p := r.URL.Path; strings.HasPrefix(p, "/static/") || p == "/healthz" || p == "/readyz" {
+		// The REST API never reads the cookie: its credential is a Bearer
+		// token (see package api), so the two session surfaces stay apart.
+		if p := r.URL.Path; strings.HasPrefix(p, "/static/") || p == "/healthz" || p == "/readyz" ||
+			p == "/api" || strings.HasPrefix(p, "/api/") {
 			next.ServeHTTP(w, r)
 			return
 		}

@@ -1,0 +1,671 @@
+openapi: 3.1.0
+info:
+  title: Ashanum Customer API
+  version: "1.0"
+  description: >
+    REST API for the Ashanum mobile app (customers). Documentation only: the
+    server does not serve Swagger UI. Narrative guide: docs/api-v1.md.
+    Money is integer rupiah; times are RFC 3339 in +07:00.
+servers:
+  - url: /api/v1
+security: []
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      description: Opaque access token (prefix ashat_), from login/register/refresh.
+  parameters:
+    page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    orderNumber:
+      name: order_number
+      in: path
+      required: true
+      schema: { type: string, example: ASH-20261104-000016 }
+    returnNumber:
+      name: return_number
+      in: path
+      required: true
+      schema: { type: string, example: RET-20261104-000006 }
+    id:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer }
+    slug:
+      name: slug
+      in: path
+      required: true
+      schema: { type: string, example: kaos-ashanum-basic }
+  responses:
+    Error:
+      description: Error (see docs/api-v1.md for codes)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NoContent:
+      description: Done
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, example: VALIDATION_ERROR }
+            message: { type: string }
+            fields:
+              type: object
+              additionalProperties: { type: string }
+    PageMeta:
+      type: object
+      required: [page, per_page, has_more]
+      properties:
+        page: { type: integer }
+        per_page: { type: integer }
+        total: { type: integer, description: Only where computed (products). }
+        has_more: { type: boolean }
+    Time:
+      type: string
+      format: date-time
+      example: "2026-11-04T15:30:00+07:00"
+    Money:
+      type: integer
+      description: Rupiah, no decimals.
+      example: 129000
+    Credentials:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8, maxLength: 72 }
+        device_name: { type: string, maxLength: 100 }
+    RefreshRequest:
+      type: object
+      additionalProperties: false
+      required: [refresh_token]
+      properties:
+        refresh_token: { type: string }
+    Tokens:
+      type: object
+      required: [access_token, refresh_token, token_type, expires_in, refresh_expires_in]
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        token_type: { type: string, const: Bearer }
+        expires_in: { type: integer, description: Seconds }
+        refresh_expires_in: { type: integer, description: Seconds }
+        user: { $ref: "#/components/schemas/User" }
+    User:
+      type: object
+      properties:
+        id: { type: integer }
+        email: { type: string }
+        first_name: { type: string }
+        last_name: { type: string }
+        phone: { type: [string, "null"], example: "+6281234567890" }
+        gender: { type: [string, "null"], enum: [LAKI_LAKI, PEREMPUAN, null] }
+        created_at: { $ref: "#/components/schemas/Time" }
+    ProfileUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        first_name: { type: string }
+        last_name: { type: string }
+        phone: { type: string }
+        gender: { type: string, enum: [LAKI_LAKI, PEREMPUAN, ""] }
+    AddressInput:
+      type: object
+      additionalProperties: false
+      properties:
+        label: { type: string }
+        recipient_name: { type: string }
+        phone: { type: string }
+        province: { type: string }
+        city: { type: string }
+        district: { type: string }
+        village: { type: string }
+        postal_code: { type: string }
+        street_address: { type: string }
+        latitude: { type: number }
+        longitude: { type: number }
+        maps_url: { type: string }
+        is_primary: { type: boolean }
+    Address:
+      allOf:
+        - $ref: "#/components/schemas/AddressInput"
+        - type: object
+          properties:
+            id: { type: integer }
+            created_at: { $ref: "#/components/schemas/Time" }
+            updated_at: { $ref: "#/components/schemas/Time" }
+    Category:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        slug: { type: string }
+        image_url: { type: [string, "null"] }
+    Rating:
+      type: object
+      properties:
+        average: { type: number }
+        count: { type: integer }
+    ProductCard:
+      type: object
+      properties:
+        id: { type: integer }
+        slug: { type: string }
+        name: { type: string }
+        brand: { type: string }
+        image_url: { type: [string, "null"] }
+        price: { $ref: "#/components/schemas/Money" }
+        price_max: { $ref: "#/components/schemas/Money" }
+        compare_at_price: { type: [integer, "null"] }
+        discount_percent: { type: integer }
+        in_stock: { type: boolean }
+        flash_sale: { type: boolean }
+        sold_count: { type: integer }
+        rating: { $ref: "#/components/schemas/Rating" }
+    Variant:
+      type: object
+      properties:
+        id: { type: integer }
+        sku: { type: string }
+        attributes:
+          type: object
+          additionalProperties: { type: string }
+          example: { Warna: Hitam, Ukuran: XL }
+        value_ids: { type: array, items: { type: integer } }
+        price: { $ref: "#/components/schemas/Money" }
+        compare_at_price: { type: [integer, "null"] }
+        discount_percent: { type: integer }
+        stock: { type: integer }
+        available: { type: boolean }
+    Product:
+      type: object
+      properties:
+        id: { type: integer }
+        slug: { type: string }
+        name: { type: string }
+        brand: { type: string }
+        description: { type: string }
+        category: { $ref: "#/components/schemas/Category" }
+        images:
+          type: array
+          items:
+            type: object
+            properties:
+              url: { type: string }
+              thumbnail_url: { type: string }
+              alt: { type: string }
+        rating: { $ref: "#/components/schemas/Rating" }
+        sold_count: { type: integer }
+        flash_sale: { type: boolean }
+        price:
+          type: object
+          properties:
+            min: { $ref: "#/components/schemas/Money" }
+            max: { $ref: "#/components/schemas/Money" }
+            compare_at_price: { type: [integer, "null"] }
+        in_stock: { type: boolean }
+        attributes:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              name: { type: string }
+              values:
+                type: array
+                items:
+                  type: object
+                  properties: { id: { type: integer }, value: { type: string } }
+        variants: { type: array, items: { $ref: "#/components/schemas/Variant" } }
+    PublicReview:
+      type: object
+      properties:
+        id: { type: integer }
+        author: { type: string, description: Masked name }
+        rating: { type: integer, minimum: 1, maximum: 5 }
+        variant_label: { type: [string, "null"] }
+        comment: { type: string }
+        created_at: { $ref: "#/components/schemas/Time" }
+    CartItem:
+      type: object
+      properties:
+        id: { type: integer }
+        product_id: { type: [integer, "null"] }
+        product_slug: { type: string }
+        product_name: { type: string }
+        variant_id: { type: [integer, "null"] }
+        variant_label: { type: string }
+        sku: { type: string }
+        image_url: { type: [string, "null"] }
+        unit_price: { $ref: "#/components/schemas/Money" }
+        compare_at_price: { type: [integer, "null"] }
+        quantity: { type: integer }
+        stock: { type: integer }
+        max_quantity: { type: integer }
+        available: { type: boolean }
+        status: { type: string, enum: [available, insufficient_stock, out_of_stock, unavailable] }
+        subtotal: { $ref: "#/components/schemas/Money" }
+    Cart:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/CartItem" } }
+        summary:
+          type: object
+          properties:
+            lines: { type: integer }
+            quantity: { type: integer }
+            subtotal: { $ref: "#/components/schemas/Money" }
+    Shipping:
+      type: object
+      properties:
+        cost: { $ref: "#/components/schemas/Money" }
+        status: { type: string, const: PENDING_INTEGRATION }
+        message: { type: string }
+    CheckoutRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        cart_item_ids: { type: array, items: { type: integer } }
+        buy_now:
+          type: object
+          additionalProperties: false
+          properties:
+            variant_id: { type: integer }
+            quantity: { type: integer }
+        address_id: { type: integer }
+        idempotency_key: { type: string, pattern: "^[A-Za-z0-9_-]{8,64}$", description: Required for POST /orders }
+        expected_total: { type: integer, description: Total seen in the preview (guard only) }
+    Preview:
+      type: object
+      properties:
+        items: { type: array, items: { type: object } }
+        address: { oneOf: [{ $ref: "#/components/schemas/Address" }, { type: "null" }] }
+        subtotal: { $ref: "#/components/schemas/Money" }
+        shipping: { $ref: "#/components/schemas/Shipping" }
+        discount: { $ref: "#/components/schemas/Money" }
+        total: { $ref: "#/components/schemas/Money" }
+        ready: { type: boolean }
+        warnings:
+          type: array
+          items:
+            type: object
+            properties: { code: { type: string }, message: { type: string }, variant_id: { type: integer } }
+        quantity: { type: integer }
+        currency: { type: string, const: IDR }
+        is_buy_now: { type: boolean }
+    OrderSummary:
+      type: object
+      properties:
+        order_number: { type: string }
+        status: { type: string, enum: [WAITING_PAYMENT, WAITING_CONFIRMATION, PROCESSING, SHIPPED, COMPLETED, CANCELLED] }
+        status_label: { type: string }
+        total: { $ref: "#/components/schemas/Money" }
+        item_count: { type: integer }
+        first_item: { type: object }
+        created_at: { $ref: "#/components/schemas/Time" }
+        payment_due_at: { type: [string, "null"], format: date-time }
+    Payment:
+      type: object
+      properties:
+        status: { type: string, enum: [PENDING, PAID, FAILED, DENIED, CANCELLED, EXPIRED] }
+        status_label: { type: string }
+        method: { type: [string, "null"] }
+        expires_at: { $ref: "#/components/schemas/Time" }
+        paid_at: { type: [string, "null"], format: date-time }
+    Order:
+      type: object
+      properties:
+        order_number: { type: string }
+        status: { type: string }
+        status_label: { type: string }
+        subtotal: { $ref: "#/components/schemas/Money" }
+        shipping: { $ref: "#/components/schemas/Shipping" }
+        discount: { $ref: "#/components/schemas/Money" }
+        total: { $ref: "#/components/schemas/Money" }
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer, description: Order item (for reviews/returns) }
+              product_slug: { type: string }
+              product_name: { type: string }
+              sku: { type: string }
+              variant_label: { type: string }
+              image_url: { type: [string, "null"] }
+              unit_price: { $ref: "#/components/schemas/Money" }
+              quantity: { type: integer }
+              subtotal: { $ref: "#/components/schemas/Money" }
+              review_id: { type: [integer, "null"] }
+              returned_quantity: { type: integer }
+              returnable_quantity: { type: integer }
+        address: { type: object }
+        shipment:
+          oneOf:
+            - type: "null"
+            - type: object
+              properties:
+                method: { type: string, const: MANUAL }
+                courier: { type: string }
+                service: { type: [string, "null"] }
+                tracking_number: { type: [string, "null"] }
+                shipped_at: { $ref: "#/components/schemas/Time" }
+                live_tracking: { type: boolean, const: false }
+        latest_payment: { oneOf: [{ $ref: "#/components/schemas/Payment" }, { type: "null" }] }
+        payment_enabled: { type: boolean }
+        sandbox: { type: boolean }
+        actions:
+          type: object
+          properties:
+            can_pay: { type: boolean }
+            can_cancel: { type: boolean }
+            can_review: { type: boolean }
+            can_return: { type: boolean }
+        return_deadline: { type: [string, "null"], format: date-time }
+        returns: { type: array, items: { type: object } }
+        cancel_reason: { type: [string, "null"] }
+        created_at: { $ref: "#/components/schemas/Time" }
+        payment_due_at: { $ref: "#/components/schemas/Time" }
+        paid_at: { type: [string, "null"], format: date-time }
+        confirmed_at: { type: [string, "null"], format: date-time }
+        cancelled_at: { type: [string, "null"], format: date-time }
+        completed_at: { type: [string, "null"], format: date-time }
+    ReviewInput:
+      type: object
+      additionalProperties: false
+      properties:
+        order_item_id: { type: integer, description: Create only }
+        rating: { type: integer, minimum: 1, maximum: 5 }
+        comment: { type: string, maxLength: 1000 }
+    MyReview:
+      type: object
+      properties:
+        id: { type: integer }
+        order_item_id: { type: integer }
+        rating: { type: integer }
+        comment: { type: string }
+        product_name: { type: string }
+        product_slug: { type: string }
+        variant_label: { type: string }
+        image_url: { type: [string, "null"] }
+        order_number: { type: string }
+        product_listed: { type: boolean }
+        hidden: { type: boolean, description: Hidden by moderation (not public) }
+        created_at: { $ref: "#/components/schemas/Time" }
+        edited_at: { type: [string, "null"], format: date-time }
+    ReturnInput:
+      type: object
+      additionalProperties: false
+      required: [order_number, items, type, reason]
+      properties:
+        order_number: { type: string }
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            properties: { order_item_id: { type: integer }, quantity: { type: integer } }
+        type: { type: string, enum: [REFUND, EXCHANGE] }
+        reason: { type: string, enum: [DAMAGED, WRONG_ITEM, MISSING_ITEM, NOT_AS_DESCRIBED, VARIANT_ISSUE, OTHER] }
+        description: { type: string, maxLength: 1000 }
+        evidence: { type: array, maxItems: 5, items: { type: string, format: uri } }
+        idempotency_key: { type: string }
+    Return:
+      type: object
+      properties:
+        return_number: { type: string }
+        order_number: { type: string }
+        type: { type: string }
+        status: { type: string }
+        status_label: { type: string }
+        refund_amount: { $ref: "#/components/schemas/Money" }
+        reason: { type: string }
+        description: { type: string }
+        resolution_note: { type: string }
+        items: { type: array, items: { type: object } }
+        evidence: { type: array, items: { type: object } }
+        timeline:
+          type: array
+          items:
+            type: object
+            properties:
+              status: { type: string }
+              status_label: { type: string }
+              actor: { type: string, enum: [BUYER, SHOP, SYSTEM] }
+              note: { type: string }
+              at: { $ref: "#/components/schemas/Time" }
+        refund: { type: [object, "null"] }
+        can_cancel: { type: boolean }
+paths:
+  /auth/register:
+    post:
+      summary: Register a customer and sign in
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/Credentials" } } } }
+      responses:
+        "201": { description: Signed in, content: { application/json: { schema: { properties: { data: { $ref: "#/components/schemas/Tokens" } } } } } }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+  /auth/login:
+    post:
+      summary: Sign in
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/Credentials" } } } }
+      responses:
+        "200": { description: Signed in, content: { application/json: { schema: { properties: { data: { $ref: "#/components/schemas/Tokens" } } } } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+  /auth/refresh:
+    post:
+      summary: Rotate the refresh token (old pair stops working; reuse revokes the device)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/RefreshRequest" } } } }
+      responses:
+        "200": { description: New pair, content: { application/json: { schema: { properties: { data: { $ref: "#/components/schemas/Tokens" } } } } } }
+        "401": { $ref: "#/components/responses/Error" }
+  /auth/logout:
+    post:
+      summary: End this device's session (Bearer token or refresh_token body)
+      requestBody: { content: { application/json: { schema: { $ref: "#/components/schemas/RefreshRequest" } } } }
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Error" }
+  /auth/logout-all:
+    post:
+      summary: End every API session of the user
+      security: [{ bearer: [] }]
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+  /me:
+    get:
+      security: [{ bearer: [] }]
+      responses:
+        "200": { description: Current user, content: { application/json: { schema: { properties: { data: { $ref: "#/components/schemas/User" } } } } } }
+        "401": { $ref: "#/components/responses/Error" }
+  /me/profile:
+    patch:
+      security: [{ bearer: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/ProfileUpdate" } } } }
+      responses:
+        "200": { description: Updated user }
+        "422": { $ref: "#/components/responses/Error" }
+  /me/addresses:
+    get:
+      security: [{ bearer: [] }]
+      responses:
+        "200": { description: Addresses (primary first), content: { application/json: { schema: { properties: { data: { type: array, items: { $ref: "#/components/schemas/Address" } } } } } } }
+    post:
+      security: [{ bearer: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/AddressInput" } } } }
+      responses:
+        "201": { description: Created }
+        "422": { $ref: "#/components/responses/Error" }
+  /me/addresses/{id}:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    patch:
+      security: [{ bearer: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/AddressInput" } } } }
+      responses: { "200": { description: Updated }, "404": { $ref: "#/components/responses/Error" } }
+    delete:
+      security: [{ bearer: [] }]
+      responses: { "204": { $ref: "#/components/responses/NoContent" }, "404": { $ref: "#/components/responses/Error" } }
+  /me/addresses/{id}/primary:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      security: [{ bearer: [] }]
+      responses: { "200": { description: Now primary }, "404": { $ref: "#/components/responses/Error" } }
+  /categories:
+    get:
+      responses: { "200": { description: Active categories, content: { application/json: { schema: { properties: { data: { type: array, items: { $ref: "#/components/schemas/Category" } } } } } } } }
+  /home:
+    get:
+      responses: { "200": { description: Categories and home sections } }
+  /products:
+    get:
+      summary: List and search products
+      parameters:
+        - { name: q, in: query, schema: { type: string, maxLength: 100 } }
+        - { name: category, in: query, schema: { type: string }, description: Category slug }
+        - { name: min_price, in: query, schema: { type: integer } }
+        - { name: max_price, in: query, schema: { type: integer } }
+        - { name: flash_sale, in: query, schema: { type: boolean } }
+        - { name: sort, in: query, schema: { type: string, enum: [relevance, newest, bestselling, price_asc, price_desc] } }
+        - { $ref: "#/components/parameters/page" }
+        - { name: per_page, in: query, schema: { type: integer, minimum: 1, maximum: 60, default: 20 } }
+      responses:
+        "200":
+          description: Product cards
+          content:
+            application/json:
+              schema:
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/ProductCard" } }
+                  meta: { allOf: [{ $ref: "#/components/schemas/PageMeta" }, { properties: { sort: { type: string } } }] }
+        "400": { $ref: "#/components/responses/Error" }
+  /products/{slug}:
+    parameters: [{ $ref: "#/components/parameters/slug" }]
+    get:
+      responses:
+        "200": { description: Product, content: { application/json: { schema: { properties: { data: { $ref: "#/components/schemas/Product" } } } } } }
+        "404": { $ref: "#/components/responses/Error" }
+  /products/{slug}/reviews:
+    parameters: [{ $ref: "#/components/parameters/slug" }, { $ref: "#/components/parameters/page" }]
+    get:
+      responses:
+        "200": { description: Visible reviews; meta.rating holds the summary, content: { application/json: { schema: { properties: { data: { type: array, items: { $ref: "#/components/schemas/PublicReview" } }, meta: { $ref: "#/components/schemas/PageMeta" } } } } } }
+  /cart:
+    get:
+      security: [{ bearer: [] }]
+      responses: { "200": { description: Cart, content: { application/json: { schema: { properties: { data: { $ref: "#/components/schemas/Cart" } } } } } } }
+    delete:
+      security: [{ bearer: [] }]
+      responses: { "204": { $ref: "#/components/responses/NoContent" } }
+  /cart/items:
+    post:
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [variant_id, quantity], properties: { variant_id: { type: integer }, quantity: { type: integer } } }
+      responses: { "201": { description: Cart }, "422": { $ref: "#/components/responses/Error" } }
+  /cart/items/{id}:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    patch:
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, additionalProperties: false, properties: { quantity: { type: integer } } } } }
+      responses: { "200": { description: Cart }, "404": { $ref: "#/components/responses/Error" }, "422": { $ref: "#/components/responses/Error" } }
+    delete:
+      security: [{ bearer: [] }]
+      responses: { "200": { description: Cart }, "404": { $ref: "#/components/responses/Error" } }
+  /checkout/preview:
+    post:
+      security: [{ bearer: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/CheckoutRequest" } } } }
+      responses: { "200": { description: Preview, content: { application/json: { schema: { properties: { data: { $ref: "#/components/schemas/Preview" } } } } } }, "422": { $ref: "#/components/responses/Error" } }
+  /orders:
+    post:
+      summary: Place an order (idempotent per idempotency_key)
+      security: [{ bearer: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/CheckoutRequest" } } } }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { properties: { data: { $ref: "#/components/schemas/Order" } } } } } }
+        "200": { description: Same idempotency key — the existing order }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+    get:
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [unpaid, processing, shipped, completed, cancelled] } }
+        - { $ref: "#/components/parameters/page" }
+      responses: { "200": { description: Orders, content: { application/json: { schema: { properties: { data: { type: array, items: { $ref: "#/components/schemas/OrderSummary" } }, meta: { $ref: "#/components/schemas/PageMeta" } } } } } } }
+  /orders/{order_number}:
+    parameters: [{ $ref: "#/components/parameters/orderNumber" }]
+    get:
+      security: [{ bearer: [] }]
+      responses: { "200": { description: Order, content: { application/json: { schema: { properties: { data: { $ref: "#/components/schemas/Order" } } } } } }, "404": { $ref: "#/components/responses/Error" } }
+  /orders/{order_number}/cancel:
+    parameters: [{ $ref: "#/components/parameters/orderNumber" }]
+    post:
+      security: [{ bearer: [] }]
+      responses: { "200": { description: Order }, "409": { $ref: "#/components/responses/Error" }, "503": { $ref: "#/components/responses/Error" } }
+  /orders/{order_number}/payment:
+    parameters: [{ $ref: "#/components/parameters/orderNumber" }]
+    post:
+      summary: Start (or reuse) a Midtrans sandbox checkout
+      security: [{ bearer: [] }]
+      responses:
+        "200": { description: "{order_number, order_status, redirect_url, payment, sandbox}" }
+        "409": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+    get:
+      summary: Current payment status, verified with the provider
+      security: [{ bearer: [] }]
+      responses: { "200": { description: "{order_number, order_status, paid, can_pay, payment, sandbox}" } }
+  /me/reviews:
+    get:
+      security: [{ bearer: [] }]
+      parameters: [{ name: tab, in: query, schema: { type: string, enum: [pending] } }, { $ref: "#/components/parameters/page" }]
+      responses: { "200": { description: Reviews (or pending items with tab=pending) } }
+  /reviews:
+    post:
+      security: [{ bearer: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/ReviewInput" } } } }
+      responses: { "201": { description: Review, content: { application/json: { schema: { properties: { data: { $ref: "#/components/schemas/MyReview" } } } } } }, "409": { $ref: "#/components/responses/Error" } }
+  /reviews/{id}:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    patch:
+      security: [{ bearer: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/ReviewInput" } } } }
+      responses: { "200": { description: Review }, "404": { $ref: "#/components/responses/Error" } }
+  /me/returns:
+    get:
+      security: [{ bearer: [] }]
+      parameters: [{ $ref: "#/components/parameters/page" }]
+      responses: { "200": { description: Returns } }
+  /me/returns/{return_number}:
+    parameters: [{ $ref: "#/components/parameters/returnNumber" }]
+    get:
+      security: [{ bearer: [] }]
+      responses: { "200": { description: Return, content: { application/json: { schema: { properties: { data: { $ref: "#/components/schemas/Return" } } } } } }, "404": { $ref: "#/components/responses/Error" } }
+  /returns:
+    post:
+      security: [{ bearer: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/ReturnInput" } } } }
+      responses: { "201": { description: Return }, "409": { $ref: "#/components/responses/Error" }, "422": { $ref: "#/components/responses/Error" } }
+  /me/returns/{return_number}/cancel:
+    parameters: [{ $ref: "#/components/parameters/returnNumber" }]
+    post:
+      security: [{ bearer: [] }]
+      responses: { "200": { description: Return }, "409": { $ref: "#/components/responses/Error" } }

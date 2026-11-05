@@ -224,7 +224,7 @@ func (q *Queries) GetPurchasableVariant(ctx context.Context, id int64) (GetPurch
 }
 
 const listCartItems = `-- name: ListCartItems :many
-SELECT ci.id, ci.quantity, ci.variant_id,
+SELECT ci.id, ci.quantity, ci.variant_id, v.product_id,
        v.sku, v.price, v.original_price, v.stock,
        coalesce(v.active AND p.active AND cat.active, false)::boolean AS available,
        p.name AS product_name, p.slug AS product_slug,
@@ -248,6 +248,7 @@ type ListCartItemsRow struct {
 	ID            int64
 	Quantity      int32
 	VariantID     *int64
+	ProductID     *int64
 	Sku           *string
 	Price         *int64
 	OriginalPrice *int64
@@ -276,6 +277,7 @@ func (q *Queries) ListCartItems(ctx context.Context, userID int64) ([]ListCartIt
 			&i.ID,
 			&i.Quantity,
 			&i.VariantID,
+			&i.ProductID,
 			&i.Sku,
 			&i.Price,
 			&i.OriginalPrice,

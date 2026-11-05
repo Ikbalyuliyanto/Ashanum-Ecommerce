@@ -10,6 +10,88 @@ import (
 	"time"
 )
 
+const aPISessionByAccess = `-- name: APISessionByAccess :one
+SELECT s.id, s.user_id, s.family_id, s.access_expires_at, s.last_used_at, s.rotated_at, s.revoked_at,
+       u.email, u.role
+FROM api_sessions s
+JOIN users u ON u.id = s.user_id
+WHERE s.access_token_hash = $1
+`
+
+type APISessionByAccessRow struct {
+	ID              int64
+	UserID          int64
+	FamilyID        int64
+	AccessExpiresAt time.Time
+	LastUsedAt      time.Time
+	RotatedAt       *time.Time
+	RevokedAt       *time.Time
+	Email           string
+	Role            string
+}
+
+// APISessionByAccess resolves a Bearer token to its session and user in
+// one indexed query; the caller checks expiry, rotation and revocation.
+func (q *Queries) APISessionByAccess(ctx context.Context, accessTokenHash []byte) (APISessionByAccessRow, error) {
+	row := q.db.QueryRow(ctx, aPISessionByAccess, accessTokenHash)
+	var i APISessionByAccessRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.FamilyID,
+		&i.AccessExpiresAt,
+		&i.LastUsedAt,
+		&i.RotatedAt,
+		&i.RevokedAt,
+		&i.Email,
+		&i.Role,
+	)
+	return i, err
+}
+
+const createAPISession = `-- name: CreateAPISession :one
+
+INSERT INTO api_sessions (user_id, family_id, access_token_hash, refresh_token_hash,
+                          access_expires_at, refresh_expires_at, device_name)
+VALUES ($1, coalesce($2::bigint, nextval('api_session_family_seq')),
+        $3, $4, $5, $6, $7)
+RETURNING id, family_id
+`
+
+type CreateAPISessionParams struct {
+	UserID           int64
+	FamilyID         *int64
+	AccessTokenHash  []byte
+	RefreshTokenHash []byte
+	AccessExpiresAt  time.Time
+	RefreshExpiresAt time.Time
+	DeviceName       string
+}
+
+type CreateAPISessionRow struct {
+	ID       int64
+	FamilyID int64
+}
+
+// API sessions (mobile Bearer tokens). Token values are never stored, only
+// their HMAC.
+// CreateAPISession issues a token pair; a NULL family starts a new family
+// (a new login), a family ID continues one (refresh rotation).
+func (q *Queries) CreateAPISession(ctx context.Context, arg CreateAPISessionParams) (CreateAPISessionRow, error) {
+	row := q.db.QueryRow(ctx, createAPISession,
+		arg.UserID,
+		arg.FamilyID,
+		arg.AccessTokenHash,
+		arg.RefreshTokenHash,
+		arg.AccessExpiresAt,
+		arg.RefreshExpiresAt,
+		arg.DeviceName,
+	)
+	var i CreateAPISessionRow
+	err := row.Scan(&i.ID, &i.FamilyID)
+	return i, err
+}
+
 const createAdminUser = `-- name: CreateAdminUser :one
 
 INSERT INTO users (email, password_hash, role)
@@ -89,6 +171,21 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateU
 	return i, err
 }
 
+const deleteExpiredAPISessions = `-- name: DeleteExpiredAPISessions :execrows
+DELETE FROM api_sessions WHERE refresh_expires_at < now()
+`
+
+// DeleteExpiredAPISessions drops rows past their refresh expiry (indexed;
+// run lazily at login). Rotated rows of a live family are kept until then,
+// so a replayed refresh token is still recognized as reuse.
+func (q *Queries) DeleteExpiredAPISessions(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredAPISessions)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteExpiredSessions = `-- name: DeleteExpiredSessions :execrows
 DELETE FROM sessions WHERE expires_at <= now()
 `
@@ -108,6 +205,20 @@ DELETE FROM sessions WHERE token_hash = $1
 func (q *Queries) DeleteSession(ctx context.Context, tokenHash []byte) error {
 	_, err := q.db.Exec(ctx, deleteSession, tokenHash)
 	return err
+}
+
+const deleteStaleAPISessions = `-- name: DeleteStaleAPISessions :execrows
+DELETE FROM api_sessions WHERE refresh_expires_at < now() OR revoked_at < now() - interval '1 day'
+`
+
+// DeleteStaleAPISessions also drops revoked rows older than a day
+// (cleanup-api-sessions command).
+func (q *Queries) DeleteStaleAPISessions(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteStaleAPISessions)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const extendSession = `-- name: ExtendSession :exec
@@ -178,12 +289,88 @@ func (q *Queries) GetUserCredentialsByEmail(ctx context.Context, email string) (
 	return i, err
 }
 
+const lockAPISessionByRefresh = `-- name: LockAPISessionByRefresh :one
+SELECT id, user_id, family_id, refresh_expires_at, rotated_at, revoked_at, device_name
+FROM api_sessions
+WHERE refresh_token_hash = $1
+FOR UPDATE
+`
+
+type LockAPISessionByRefreshRow struct {
+	ID               int64
+	UserID           int64
+	FamilyID         int64
+	RefreshExpiresAt time.Time
+	RotatedAt        *time.Time
+	RevokedAt        *time.Time
+	DeviceName       string
+}
+
+func (q *Queries) LockAPISessionByRefresh(ctx context.Context, refreshTokenHash []byte) (LockAPISessionByRefreshRow, error) {
+	row := q.db.QueryRow(ctx, lockAPISessionByRefresh, refreshTokenHash)
+	var i LockAPISessionByRefreshRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.FamilyID,
+		&i.RefreshExpiresAt,
+		&i.RotatedAt,
+		&i.RevokedAt,
+		&i.DeviceName,
+	)
+	return i, err
+}
+
 const promoteToAdmin = `-- name: PromoteToAdmin :execrows
 UPDATE users SET role = 'ADMIN' WHERE id = $1 AND role <> 'ADMIN'
 `
 
 func (q *Queries) PromoteToAdmin(ctx context.Context, id int64) (int64, error) {
 	result, err := q.db.Exec(ctx, promoteToAdmin, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const revokeAPIFamily = `-- name: RevokeAPIFamily :execrows
+UPDATE api_sessions SET revoked_at = now(), revoked_reason = $1
+WHERE family_id = $2 AND revoked_at IS NULL
+`
+
+type RevokeAPIFamilyParams struct {
+	Reason   *string
+	FamilyID int64
+}
+
+func (q *Queries) RevokeAPIFamily(ctx context.Context, arg RevokeAPIFamilyParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeAPIFamily, arg.Reason, arg.FamilyID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const revokeUserAPISessions = `-- name: RevokeUserAPISessions :execrows
+UPDATE api_sessions SET revoked_at = now(), revoked_reason = 'LOGOUT_ALL'
+WHERE user_id = $1 AND revoked_at IS NULL
+`
+
+func (q *Queries) RevokeUserAPISessions(ctx context.Context, userID int64) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeUserAPISessions, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const rotateAPISession = `-- name: RotateAPISession :execrows
+UPDATE api_sessions SET rotated_at = now(), last_used_at = now()
+WHERE id = $1 AND rotated_at IS NULL AND revoked_at IS NULL
+`
+
+func (q *Queries) RotateAPISession(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.Exec(ctx, rotateAPISession, id)
 	if err != nil {
 		return 0, err
 	}
@@ -207,6 +394,15 @@ func (q *Queries) SetProfileName(ctx context.Context, arg SetProfileNameParams) 
 	return err
 }
 
+const touchAPISession = `-- name: TouchAPISession :exec
+UPDATE api_sessions SET last_used_at = now() WHERE id = $1
+`
+
+func (q *Queries) TouchAPISession(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, touchAPISession, id)
+	return err
+}
+
 const userByEmail = `-- name: UserByEmail :one
 SELECT id, email, role, created_at FROM users WHERE email = $1
 `
@@ -221,6 +417,29 @@ type UserByEmailRow struct {
 func (q *Queries) UserByEmail(ctx context.Context, email string) (UserByEmailRow, error) {
 	row := q.db.QueryRow(ctx, userByEmail, email)
 	var i UserByEmailRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Role,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const userByID = `-- name: UserByID :one
+SELECT id, email, role, created_at FROM users WHERE id = $1
+`
+
+type UserByIDRow struct {
+	ID        int64
+	Email     string
+	Role      string
+	CreatedAt time.Time
+}
+
+func (q *Queries) UserByID(ctx context.Context, id int64) (UserByIDRow, error) {
+	row := q.db.QueryRow(ctx, userByID, id)
+	var i UserByIDRow
 	err := row.Scan(
 		&i.ID,
 		&i.Email,

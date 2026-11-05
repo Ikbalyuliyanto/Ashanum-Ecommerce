@@ -14,6 +14,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -36,6 +37,7 @@ type Config struct {
 	Midtrans  Midtrans
 	Returns   Returns
 	Inventory Inventory
+	API       API
 }
 
 type Database struct {
@@ -80,6 +82,24 @@ type Inventory struct {
 	LowStockThreshold int
 }
 
+// API configures the REST API (/api/v1) used by mobile apps.
+type API struct {
+	// Token lifetimes: the access token is short, the refresh token long
+	// (API_ACCESS_TOKEN_TTL, API_REFRESH_TOKEN_TTL; Go durations or "30d").
+	AccessTTL  time.Duration
+	RefreshTTL time.Duration
+	// CORSOrigins are the browser origins allowed to call the API
+	// (API_CORS_ALLOWED_ORIGINS, comma separated). Empty — the default — sends
+	// no CORS headers: native apps do not need them. "*" is refused.
+	CORSOrigins []string
+	// PaymentFinishURL is where the payment provider sends the buyer back
+	// after paying from the app (API_PAYMENT_FINISH_URL), e.g. an app link
+	// https://shop.example/app/payment-finish?order={order_number} or
+	// ashanum://payment/finish?order={order_number}. Server configured only:
+	// clients can never choose it. Empty uses the web finish page.
+	PaymentFinishURL string
+}
+
 // minSessionSecret is the minimum SESSION_SECRET length (bytes).
 const minSessionSecret = 32
 
@@ -106,6 +126,12 @@ func Load() (*Config, error) {
 		},
 		Returns:   Returns{WindowDays: getInt("RETURN_WINDOW_DAYS", 7, &errs)},
 		Inventory: Inventory{LowStockThreshold: getInt("LOW_STOCK_THRESHOLD", 5, &errs)},
+		API: API{
+			AccessTTL:        getDuration("API_ACCESS_TOKEN_TTL", 15*time.Minute, &errs),
+			RefreshTTL:       getDuration("API_REFRESH_TOKEN_TTL", 30*24*time.Hour, &errs),
+			CORSOrigins:      getList("API_CORS_ALLOWED_ORIGINS"),
+			PaymentFinishURL: getString("API_PAYMENT_FINISH_URL", ""),
+		},
 		Database: Database{
 			URL:      getString("DATABASE_URL", ""),
 			MaxConns: int32(getInt("DB_MAX_CONNS", 10, &errs)),
@@ -136,6 +162,7 @@ func Load() (*Config, error) {
 	if n := cfg.Inventory.LowStockThreshold; n < 0 || n > 10000 {
 		errs = append(errs, fmt.Errorf("LOW_STOCK_THRESHOLD must be between 0 and 10000, got %d", n))
 	}
+	errs = append(errs, cfg.validateAPI()...)
 
 	switch secret := getString("SESSION_SECRET", ""); {
 	case secret != "" && len(secret) < minSessionSecret:
@@ -182,6 +209,78 @@ func (c *Config) validatePayments() []error {
 		errs = append(errs, errors.New("APP_BASE_URL must use https in production"))
 	}
 	return errs
+}
+
+// validateAPI checks the API_* settings.
+func (c *Config) validateAPI() []error {
+	var errs []error
+	a := c.API
+	if a.AccessTTL < time.Minute || a.AccessTTL > 24*time.Hour {
+		errs = append(errs, fmt.Errorf("API_ACCESS_TOKEN_TTL must be between 1m and 24h, got %s", a.AccessTTL))
+	}
+	if a.RefreshTTL < time.Hour || a.RefreshTTL > 365*24*time.Hour || a.RefreshTTL <= a.AccessTTL {
+		errs = append(errs, fmt.Errorf("API_REFRESH_TOKEN_TTL must be between 1h and 365d and longer than the access token, got %s", a.RefreshTTL))
+	}
+	for _, o := range a.CORSOrigins {
+		u, err := url.Parse(o)
+		switch {
+		case o == "*" || strings.Contains(o, "*"):
+			errs = append(errs, errors.New("API_CORS_ALLOWED_ORIGINS must list exact origins, never *"))
+		case err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || (u.Path != "" && u.Path != "/") ||
+			u.RawQuery != "" || u.User != nil:
+			errs = append(errs, fmt.Errorf("API_CORS_ALLOWED_ORIGINS: %q is not an origin such as https://app.example", o))
+		case c.IsProduction() && u.Scheme != "https":
+			errs = append(errs, fmt.Errorf("API_CORS_ALLOWED_ORIGINS: %q must use https in production", o))
+		}
+	}
+	if f := a.PaymentFinishURL; f != "" {
+		u, err := url.Parse(strings.ReplaceAll(f, "{order_number}", "X"))
+		scheme := ""
+		if err == nil {
+			scheme = strings.ToLower(u.Scheme)
+		}
+		switch {
+		case err != nil || scheme == "" || len(f) > 300 || strings.ContainsAny(f, " \t\r\n\"'<>"):
+			errs = append(errs, errors.New("API_PAYMENT_FINISH_URL must be an absolute URL or app link"))
+		case scheme == "javascript" || scheme == "data" || scheme == "file" || scheme == "vbscript":
+			errs = append(errs, fmt.Errorf("API_PAYMENT_FINISH_URL: scheme %q is not allowed", scheme))
+		case (scheme == "https" || scheme == "http") && u.Host == "":
+			errs = append(errs, errors.New("API_PAYMENT_FINISH_URL needs a host"))
+		case scheme == "http" && c.IsProduction():
+			errs = append(errs, errors.New("API_PAYMENT_FINISH_URL must use https (or an app scheme) in production"))
+		}
+	}
+	return errs
+}
+
+// getDuration reads a Go duration ("15m", "720h") or whole days ("30d").
+func getDuration(key string, def time.Duration, errs *[]error) time.Duration {
+	v := getString(key, "")
+	if v == "" {
+		return def
+	}
+	if days, ok := strings.CutSuffix(v, "d"); ok {
+		if n, err := strconv.Atoi(days); err == nil && n > 0 {
+			return time.Duration(n) * 24 * time.Hour
+		}
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		*errs = append(*errs, fmt.Errorf("%s must be a duration such as 15m, 720h or 30d, got %q", key, v))
+		return def
+	}
+	return d
+}
+
+// getList reads a comma-separated list, dropping empty entries.
+func getList(key string) []string {
+	var out []string
+	for _, p := range strings.Split(getString(key, ""), ",") {
+		if p = strings.TrimRight(strings.TrimSpace(p), "/"); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func getString(key, def string) string {

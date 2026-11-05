@@ -15,6 +15,7 @@ import (
 
 	"ecommerce/internal/address"
 	"ecommerce/internal/admin"
+	"ecommerce/internal/api"
 	"ecommerce/internal/audit"
 	"ecommerce/internal/auth"
 	"ecommerce/internal/cart"
@@ -53,15 +54,17 @@ type Deps struct {
 // handlers, then registers each module's routes through its Routes method.
 func NewRouter(d Deps) http.Handler {
 	authSvc := auth.NewService(auth.NewRepository(d.DB), d.Config.Session.Secret)
+	authSvc.ConfigureAPI(d.Config.API.AccessTTL, d.Config.API.RefreshTTL)
 	userSvc := user.NewService(user.NewRepository(d.DB))
 	addressSvc := address.NewService(address.NewRepository(d.DB))
 	categorySvc := category.NewService(category.NewRepository(d.DB))
 	productSvc := product.NewService(product.NewRepository(d.DB))
 	cartSvc := cart.NewService(cart.NewRepository(d.DB))
 	paymentSvc := payment.NewService(payment.NewRepository(d.DB), d.PaymentProvider, payment.Options{
-		BaseURL: d.Config.BaseURL,
-		Sandbox: d.Config.Midtrans.Env == config.MidtransSandbox,
-		Log:     d.Log,
+		BaseURL:      d.Config.BaseURL,
+		AppFinishURL: d.Config.API.PaymentFinishURL,
+		Sandbox:      d.Config.Midtrans.Env == config.MidtransSandbox,
+		Log:          d.Log,
 	})
 	reviewSvc := review.NewService(review.NewRepository(d.DB))
 	returnSvc := returns.NewService(returns.NewRepository(d.DB), returns.Options{WindowDays: d.Config.Returns.WindowDays})
@@ -93,16 +96,26 @@ func NewRouter(d Deps) http.Handler {
 		middleware.RealIP,
 		middleware.Logger(d.Log),
 		middleware.Recover(d.Log, func(w http.ResponseWriter, req *http.Request) {
+			if api.IsAPI(req.URL.Path) {
+				api.InternalError(w)
+				return
+			}
 			d.View.Error(w, req, http.StatusInternalServerError)
 		}),
 		middleware.SecureHeaders(d.Config.IsProduction(), d.CheckoutOrigin),
+		// The web keeps the same-origin check; /api/v1 is exempt because it
+		// authenticates with Bearer tokens only, never cookies.
 		middleware.CSRF(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			d.View.Error(w, req, http.StatusForbidden)
-		})),
+		}), api.Prefix+"/"),
 		authH.LoadSession,
 	)
 
 	r.NotFound(func(w http.ResponseWriter, req *http.Request) {
+		if api.IsAPI(req.URL.Path) {
+			api.NotFound(w)
+			return
+		}
 		d.View.Error(w, req, http.StatusNotFound)
 	})
 	r.MethodNotAllowed(func(w http.ResponseWriter, req *http.Request) {
@@ -120,6 +133,14 @@ func NewRouter(d Deps) http.Handler {
 	reviewH.PublicRoutes(r)
 	authH.Routes(r)
 	paymentH.WebhookRoutes(r)
+
+	// REST API for mobile apps: the same services, a JSON transport and
+	// Bearer-token API sessions (no cookies).
+	r.Route(api.Prefix, api.NewHandler(api.Deps{
+		Log: d.Log, Auth: authSvc, Users: userSvc, Addresses: addressSvc, Categories: categorySvc,
+		Products: productSvc, Cart: cartSvc, Checkout: checkoutSvc, Orders: orderSvc, Payments: paymentSvc,
+		Reviews: reviewSvc, Returns: returnSvc, CORSOrigins: d.Config.API.CORSOrigins,
+	}).Routes)
 
 	// Back office: signed-in ADMIN only. Guests go to the login page; any
 	// other account gets the ordinary 404, as if /admin did not exist.
