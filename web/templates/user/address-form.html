@@ -22,18 +22,20 @@
 
   <section class="card">
     <h2 class="card__title form-section-title">Alamat</h2>
+    {{$auto := .Data.ShippingEnabled}}
+    {{if .Data.ShippingEnabled}}{{template "area-picker" .}}{{end}}
     {{template "field" (dict "ID" "province" "Name" "province" "Label" "Provinsi" "Value" .Data.Form.Province
-        "Auto" "address-level1" "Max" 60 "Required" true "Error" (index .Data.Errors "province"))}}
+        "Auto" "address-level1" "Max" 60 "Required" (not $auto) "Error" (index .Data.Errors "province"))}}
     {{template "field" (dict "ID" "city" "Name" "city" "Label" "Kabupaten/Kota" "Value" .Data.Form.City
-        "Auto" "address-level2" "Max" 60 "Required" true "Error" (index .Data.Errors "city"))}}
+        "Auto" "address-level2" "Max" 60 "Required" (not $auto) "Error" (index .Data.Errors "city"))}}
     <div class="field-row">
       {{template "field" (dict "ID" "district" "Name" "district" "Label" "Kecamatan" "Value" .Data.Form.District
-          "Auto" "address-level3" "Max" 60 "Required" true "Error" (index .Data.Errors "district"))}}
+          "Auto" "address-level3" "Max" 60 "Required" (not $auto) "Error" (index .Data.Errors "district"))}}
       {{template "field" (dict "ID" "village" "Name" "village" "Label" "Kelurahan/Desa" "Value" .Data.Form.Village
           "Max" 60 "Required" true "Error" (index .Data.Errors "village"))}}
     </div>
     {{template "field" (dict "ID" "postal_code" "Name" "postal_code" "Label" "Kode Pos" "Value" .Data.Form.PostalCode
-        "Auto" "postal-code" "Mode" "numeric" "Max" 5 "Pattern" "[0-9]{5}" "Required" true
+        "Auto" "postal-code" "Mode" "numeric" "Max" 5 "Pattern" "[0-9]{5}" "Required" (not $auto)
         "Error" (index .Data.Errors "postal_code"))}}
     <div class="field">
       <label class="field__label" for="street_address">Alamat Lengkap</label>
@@ -84,4 +86,46 @@
     <button class="btn btn--primary btn--block" type="submit">Simpan Alamat</button>
   </div>
 </form>
+{{end}}
+
+{{/* Delivery area (kecamatan + kode pos) from the shipping provider's area
+     search. Typing searches with HTMX; without JavaScript the "Cari" button
+     posts the form with intent=search_area and the page comes back with the
+     results (nothing is saved). The chosen area fills province, city,
+     district and postal code on save. */}}
+{{define "area-picker"}}
+{{$d := .Data}}
+<div class="field area-picker">
+  <label class="field__label" for="area_q">Lokasi Pengiriman <span class="muted">(kecamatan atau kode pos)</span></label>
+  {{if $d.Form.ShippingAreaID}}
+  <label class="area-option is-selected">
+    <input type="radio" name="shipping_area_id" value="{{$d.Form.ShippingAreaID}}" checked>
+    <span class="area-option__label">{{icon "map-pin"}} {{$d.AreaLabel}}</span>
+  </label>
+  {{end}}
+  <div class="area-search">
+    <input class="input" id="area_q" name="area_q" type="search" value="{{$d.AreaQuery}}" maxlength="60" autocomplete="off"
+           placeholder="Contoh: Coblong atau 40132" aria-describedby="area-hint"
+           hx-get="/account/addresses/areas" hx-trigger="input changed delay:400ms, search" hx-target="#area-results">
+    <button class="btn btn--outline area-search__btn" type="submit" name="intent" value="search_area" formnovalidate>Cari</button>
+  </div>
+  <p class="field__hint" id="area-hint">{{if $d.Form.ShippingAreaID}}Cari lagi untuk mengganti lokasi. {{end}}Provinsi, kota, kecamatan, dan kode pos mengikuti lokasi yang dipilih. Ongkos kirim dihitung dari lokasi ini.</p>
+  <div id="area-results" aria-live="polite">{{template "area-results" .}}</div>
+  {{with index $d.Errors "shipping_area_id"}}<p class="field__error">{{.}}</p>{{end}}
+</div>
+{{end}}
+
+{{define "area-results"}}
+{{- $d := .Data}}{{if $d.AreaResults}}
+<fieldset class="area-options">
+  <legend class="visually-hidden">Pilih lokasi pengiriman</legend>
+  {{range $d.AreaResults}}
+  <label class="area-option">
+    <input type="radio" name="shipping_area_id" value="{{.ID}}">
+    <span class="area-option__label">{{.Label}}</span>
+  </label>
+  {{end}}
+</fieldset>
+{{- else if $d.AreaError}}<p class="muted area-results__empty">{{$d.AreaError}}</p>
+{{- end}}
 {{end}}

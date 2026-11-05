@@ -22,11 +22,13 @@ SELECT id FROM users WHERE id = @user_id FOR NO KEY UPDATE;
 INSERT INTO user_addresses (
     user_id, label, recipient_name, phone,
     province, city, district, village, postal_code, street_address,
-    latitude, longitude, maps_url, is_primary
+    latitude, longitude, maps_url, is_primary,
+    shipping_area_provider, shipping_area_id, shipping_area_label
 ) VALUES (
     @user_id, @label, @recipient_name, @phone,
     @province, @city, @district, @village, @postal_code, @street_address,
-    @latitude, @longitude, @maps_url, @is_primary
+    @latitude, @longitude, @maps_url, @is_primary,
+    @shipping_area_provider, @shipping_area_id, @shipping_area_label
 )
 RETURNING *;
 
@@ -44,7 +46,10 @@ SET label          = @label,
     latitude       = @latitude,
     longitude      = @longitude,
     maps_url       = @maps_url,
-    is_primary     = @is_primary
+    is_primary     = @is_primary,
+    shipping_area_provider = @shipping_area_provider,
+    shipping_area_id       = @shipping_area_id,
+    shipping_area_label    = @shipping_area_label
 WHERE id = @id AND user_id = @user_id
 RETURNING *;
 

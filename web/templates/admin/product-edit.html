@@ -14,6 +14,7 @@
       <button class="btn btn--sm{{if $p.Active}} btn--outline{{else}} btn--primary{{end}}" type="submit">{{if $p.Active}}Nonaktifkan{{else}}Aktifkan{{end}}</button>
     </form>
   </div>
+  {{if $p.WeightMissing}}<p class="alert alert--error" role="alert">Berat produk belum diatur: varian aktif tanpa berat tidak bisa dibeli (ongkos kirim tidak bisa dihitung). Isi <strong>Berat per unit</strong> di bawah.</p>{{end}}
   <p class="muted adm-note">Produk tidak dihapus: nonaktifkan agar tidak tampil di toko. Riwayat pesanan, ulasan, dan retur tetap utuh. Terjual {{$p.SoldCount}} · rating {{printf "%.1f" $p.RatingAverage}} ({{$p.RatingCount}} ulasan tampil).</p>
 
   {{if $e}}<p class="alert alert--error" role="alert">Periksa kembali isian yang ditandai.</p>{{end}}
@@ -37,6 +38,7 @@
           <label>SKU <input class="input" name="sku" value="{{.SKU}}" required maxlength="64"></label>
           <label>Harga (Rp) <input class="input" name="price" value="{{.Price}}" inputmode="numeric" required></label>
           <label>Harga coret <input class="input" name="original_price" value="{{if .OriginalPrice}}{{.OriginalPrice}}{{end}}" inputmode="numeric" placeholder="—"></label>
+          <label>Berat (g) <input class="input" name="weight_grams" value="{{if .WeightGrams}}{{.WeightGrams}}{{end}}" inputmode="numeric" placeholder="ikut produk"{{if $p.WeightGrams}} title="Kosong: {{$p.WeightGrams}} g dari produk"{{end}}></label>
           <label class="check"><input type="checkbox" name="active" value="1"{{if .Active}} checked{{end}}> Dijual</label>
         </div>
         <div class="adm-variant__actions">
@@ -70,6 +72,9 @@
         <div class="field-row">
           <div class="field"><label class="field__label" for="nv-orig">Harga coret <span class="field__optional">(opsional)</span></label><input class="input" id="nv-orig" name="original_price" inputmode="numeric"></div>
           <div class="field"><label class="field__label" for="nv-stock">Stok awal</label><input class="input" id="nv-stock" name="stock" inputmode="numeric" value="0" required></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label class="field__label" for="nv-weight">Berat (gram) <span class="field__optional">(kosong = ikut produk)</span></label><input class="input" id="nv-weight" name="weight_grams" inputmode="numeric"></div>
         </div>
         <button class="btn btn--primary btn--sm" type="submit">Tambah Varian</button>
       </form>

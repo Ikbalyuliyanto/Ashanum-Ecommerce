@@ -17,6 +17,8 @@ const (
 	maxPrice           = 10_000_000_000 // Rp10 miliar
 	maxStock           = 1_000_000
 	maxDescriptionRune = 5000
+	maxWeightGrams     = 100_000 // 100 kg per unit
+	maxDimensionCM     = 300
 )
 
 var skuPattern = regexp.MustCompile(`^[A-Z0-9][A-Z0-9._-]{0,63}$`)
@@ -34,6 +36,10 @@ type validProduct struct {
 	Images      []ImageInput
 	Attributes  []AttributeInput
 	Variants    []validVariant
+	WeightGrams int
+	LengthCM    int
+	WidthCM     int
+	HeightCM    int
 }
 
 type validVariant struct {
@@ -41,6 +47,7 @@ type validVariant struct {
 	Price         int64
 	OriginalPrice int64
 	Stock         int
+	WeightGrams   int      // 0 = the product's weight
 	Values        []string // one value per attribute, in attribute order
 }
 
@@ -57,8 +64,13 @@ func normalizeInput(in Input) (validProduct, error) {
 		Active:      in.Active,
 		Featured:    in.Featured,
 		FlashSale:   in.FlashSale,
+		WeightGrams: in.WeightGrams,
+		LengthCM:    in.LengthCM,
+		WidthCM:     in.WidthCM,
+		HeightCM:    in.HeightCM,
 	}
 
+	checkShipping(errs, p.Active, p.WeightGrams, p.LengthCM, p.WidthCM, p.HeightCM)
 	if p.CategoryID <= 0 {
 		errs.Add("category_id", "Pilih kategori produk.")
 	}
@@ -147,7 +159,11 @@ func normalizeVariants(errs validate.Errors, attrs []AttributeInput, in []Varian
 			Price:         v.Price,
 			OriginalPrice: v.OriginalPrice,
 			Stock:         v.Stock,
+			WeightGrams:   v.WeightGrams,
 			Values:        make([]string, len(attrs)),
+		}
+		if !variantWeightOK(vv.WeightGrams) {
+			errs.Add(key+".weight_grams", "Berat varian 1–100.000 gram, atau kosong untuk mengikuti berat produk.")
 		}
 
 		if !skuPattern.MatchString(vv.SKU) {
@@ -188,6 +204,28 @@ func normalizeVariants(errs validate.Errors, attrs []AttributeInput, in []Varian
 	}
 	return out
 }
+
+// checkShipping validates the shipping data: an active product needs a
+// weight (rates are never computed with an assumed weight); dimensions are
+// optional.
+func checkShipping(errs validate.Errors, active bool, weight, length, width, height int) {
+	switch {
+	case weight < 0 || weight > maxWeightGrams:
+		errs.Add("weight_grams", "Berat produk 1–100.000 gram.")
+	case weight == 0 && active:
+		errs.Add("weight_grams", "Isi berat produk (gram): ongkos kirim dihitung dari berat. Produk tanpa berat tidak bisa diaktifkan.")
+	}
+	for _, d := range []struct {
+		field string
+		v     int
+	}{{"length_cm", length}, {"width_cm", width}, {"height_cm", height}} {
+		if d.v < 0 || d.v > maxDimensionCM {
+			errs.Add(d.field, "Dimensi 1–300 cm, atau kosong.")
+		}
+	}
+}
+
+func variantWeightOK(w int) bool { return w >= 0 && w <= maxWeightGrams }
 
 // option finds the value chosen for attribute name (case-insensitive).
 func option(opts map[string]string, name string) (string, bool) {

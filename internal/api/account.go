@@ -202,6 +202,9 @@ type addressReq struct {
 	Longitude     *float64 `json:"longitude"`
 	MapsURL       *string  `json:"maps_url"`
 	IsPrimary     *bool    `json:"is_primary"`
+	// ShippingAreaID is an id from GET /shipping/areas ("" removes it).
+	// The area's province, city, district and postal code are saved.
+	ShippingAreaID *string `json:"shipping_area_id"`
 }
 
 func (q addressReq) apply(in *address.Input) {
@@ -215,6 +218,7 @@ func (q addressReq) apply(in *address.Input) {
 	set(&in.PostalCode, q.PostalCode)
 	set(&in.StreetAddress, q.StreetAddress)
 	set(&in.MapsURL, q.MapsURL)
+	set(&in.ShippingAreaID, q.ShippingAreaID)
 	if q.Latitude != nil {
 		in.Latitude = strconv.FormatFloat(*q.Latitude, 'f', -1, 64)
 	}

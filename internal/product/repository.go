@@ -166,6 +166,10 @@ func (r *Repository) Create(ctx context.Context, p validProduct, adminID int64) 
 			Active:      p.Active,
 			Featured:    p.Featured,
 			FlashSale:   p.FlashSale,
+			WeightGrams: int32(p.WeightGrams),
+			LengthCm:    dimension(p.LengthCM),
+			WidthCm:     dimension(p.WidthCM),
+			HeightCm:    dimension(p.HeightCM),
 		})
 		if err != nil {
 			return err
@@ -205,6 +209,7 @@ func (r *Repository) Create(ctx context.Context, p validProduct, adminID int64) 
 				Price:         v.Price,
 				OriginalPrice: optional(v.OriginalPrice),
 				Stock:         int32(v.Stock),
+				WeightGrams:   dimension(v.WeightGrams),
 			})
 			if err != nil {
 				return err
@@ -272,4 +277,21 @@ func optionalText(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// dimension stores 0 (unknown / not overridden) as NULL.
+func dimension(v int) *int32 {
+	if v <= 0 {
+		return nil
+	}
+	n := int32(v)
+	return &n
+}
+
+// deref32 reads an optional int column (0 when NULL).
+func deref32(p *int32) int32 {
+	if p == nil {
+		return 0
+	}
+	return *p
 }

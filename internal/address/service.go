@@ -1,12 +1,42 @@
 package address
 
-import "context"
+import (
+	"context"
+	"errors"
 
-type Service struct {
-	repo *Repository
+	"ecommerce/internal/shipping"
+)
+
+// Areas looks up a delivery area found earlier by the area search
+// (shipping.Service).
+type Areas interface {
+	Area(ctx context.Context, id string) (shipping.Area, error)
 }
 
-func NewService(repo *Repository) *Service { return &Service{repo: repo} }
+type Service struct {
+	repo  *Repository
+	areas Areas // nil: no shipping provider, areas cannot be chosen
+}
+
+func NewService(repo *Repository, areas Areas) *Service { return &Service{repo: repo, areas: areas} }
+
+// normalize looks up the chosen area, then validates the input.
+func (s *Service) normalize(ctx context.Context, in Input) (fields, error) {
+	if in.ShippingAreaID == "" {
+		return normalize(in, nil, "")
+	}
+	if s.areas == nil {
+		return normalize(in, nil, "Lokasi pengiriman belum dapat dipilih saat ini.")
+	}
+	a, err := s.areas.Area(ctx, in.ShippingAreaID)
+	switch {
+	case errors.Is(err, shipping.ErrAreaNotFound), errors.Is(err, shipping.ErrNotConfigured):
+		return normalize(in, nil, shipping.Message(shipping.ErrAreaNotFound))
+	case err != nil:
+		return fields{}, err
+	}
+	return normalize(in, &a, "")
+}
 
 // List returns the user's addresses, primary first, then newest first.
 func (s *Service) List(ctx context.Context, userID int64) ([]Address, error) {
@@ -21,7 +51,7 @@ func (s *Service) Get(ctx context.Context, userID, id int64) (Address, error) {
 // Create adds an address. The first address always becomes primary; a later
 // one does when in.MakePrimary is set.
 func (s *Service) Create(ctx context.Context, userID int64, in Input) (Address, error) {
-	f, err := normalize(in)
+	f, err := s.normalize(ctx, in)
 	if err != nil {
 		return Address{}, err
 	}
@@ -53,7 +83,7 @@ func (s *Service) Create(ctx context.Context, userID int64, in Input) (Address, 
 // Update changes an address. It can become primary but never stops being
 // primary here: choose another address as primary instead.
 func (s *Service) Update(ctx context.Context, userID, id int64, in Input) (Address, error) {
-	f, err := normalize(in)
+	f, err := s.normalize(ctx, in)
 	if err != nil {
 		return Address{}, err
 	}

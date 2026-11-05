@@ -54,6 +54,9 @@ func (q *Queries) CheckoutCartLines(ctx context.Context, arg CheckoutCartLinesPa
 const checkoutVariants = `-- name: CheckoutVariants :many
 SELECT v.id, v.sku, v.price, v.original_price, v.stock,
        (v.active AND p.active AND c.active)::boolean AS available,
+       coalesce(v.weight_grams, p.weight_grams)::int AS weight_grams,
+       coalesce(p.length_cm, 0)::int AS length_cm, coalesce(p.width_cm, 0)::int AS width_cm,
+       coalesce(p.height_cm, 0)::int AS height_cm,
        p.id AS product_id, p.name AS product_name, p.slug AS product_slug,
        coalesce((SELECT i.url FROM product_images i WHERE i.product_id = p.id
                  ORDER BY i.display_order, i.id LIMIT 1), '')::text AS image_url,
@@ -76,6 +79,10 @@ type CheckoutVariantsRow struct {
 	OriginalPrice *int64
 	Stock         int32
 	Available     bool
+	WeightGrams   int32
+	LengthCm      int32
+	WidthCm       int32
+	HeightCm      int32
 	ProductID     int64
 	ProductName   string
 	ProductSlug   string
@@ -99,6 +106,10 @@ func (q *Queries) CheckoutVariants(ctx context.Context, ids []int64) ([]Checkout
 			&i.OriginalPrice,
 			&i.Stock,
 			&i.Available,
+			&i.WeightGrams,
+			&i.LengthCm,
+			&i.WidthCm,
+			&i.HeightCm,
 			&i.ProductID,
 			&i.ProductName,
 			&i.ProductSlug,
@@ -119,66 +130,92 @@ const createOrder = `-- name: CreateOrder :one
 WITH new_order AS (
     INSERT INTO orders (user_id, idempotency_key, subtotal, shipping_cost, discount, total,
                         address_label, recipient_name, recipient_phone, province, city, district,
-                        village, postal_code, address, latitude, longitude)
-    VALUES ($1, $2, $3, 0, 0, $3,
-            $4, $5, $6, $7, $8, $9,
-            $10, $11, $12, $13, $14)
+                        village, postal_code, address, latitude, longitude,
+                        shipping_provider, shipping_courier_code, shipping_courier_name, shipping_service_code,
+                        shipping_service_name, shipping_estimated_days, shipping_weight_grams,
+                        shipping_area_id, shipping_area_label, shipping_origin)
+    VALUES ($1, $2, $3, $4, 0, $5,
+            $6, $7, $8, $9, $10, $11,
+            $12, $13, $14, $15, $16,
+            $17, $18, $19, $20,
+            $21, $22, $23,
+            $24, $25, $26)
     RETURNING id, order_number
 ), items AS (
     INSERT INTO order_items (order_id, product_id, variant_id, product_name, product_slug, sku,
-                             variant_label, image_url, unit_price, quantity, subtotal)
+                             variant_label, image_url, unit_price, quantity, subtotal, weight_grams)
     SELECT new_order.id,
-           ($15::bigint[])[x.n], x.variant_id, ($16::text[])[x.n],
-           ($17::text[])[x.n], ($18::text[])[x.n], ($19::text[])[x.n],
-           ($20::text[])[x.n], ($21::bigint[])[x.n], ($22::int[])[x.n],
-           ($21::bigint[])[x.n] * ($22::int[])[x.n]
-    FROM new_order, unnest($23::bigint[]) WITH ORDINALITY AS x(variant_id, n)
+           ($27::bigint[])[x.n], x.variant_id, ($28::text[])[x.n],
+           ($29::text[])[x.n], ($30::text[])[x.n], ($31::text[])[x.n],
+           ($32::text[])[x.n], ($33::bigint[])[x.n], ($34::int[])[x.n],
+           ($33::bigint[])[x.n] * ($34::int[])[x.n], ($35::int[])[x.n]
+    FROM new_order, unnest($36::bigint[]) WITH ORDINALITY AS x(variant_id, n)
     RETURNING 1
 ), stock AS (
     UPDATE product_variants v
-    SET stock = v.stock - ($22::int[])[s.n]
-    FROM unnest($23::bigint[]) WITH ORDINALITY AS s(variant_id, n)
-    WHERE v.id = s.variant_id AND v.stock >= ($22::int[])[s.n]
+    SET stock = v.stock - ($34::int[])[s.n]
+    FROM unnest($36::bigint[]) WITH ORDINALITY AS s(variant_id, n)
+    WHERE v.id = s.variant_id AND v.stock >= ($34::int[])[s.n]
     RETURNING v.id
 ), cleared AS (
     DELETE FROM cart_items ci
     USING carts c
     WHERE ci.cart_id = c.id AND c.user_id = $1 AND c.active
-      AND ci.id = ANY($24::bigint[])
+      AND ci.id = ANY($37::bigint[])
     RETURNING ci.id
+), quote AS (
+    UPDATE shipping_quotes q SET order_id = new_order.id, used_at = now()
+    FROM new_order
+    WHERE q.id = $38 AND q.user_id = $1 AND q.order_id IS NULL
+    RETURNING q.id
 )
 SELECT new_order.id, new_order.order_number,
        (SELECT count(*) FROM items)::int   AS items_created,
        (SELECT count(*) FROM stock)::int   AS stock_updated,
-       (SELECT count(*) FROM cleared)::int AS cart_cleared
+       (SELECT count(*) FROM cleared)::int AS cart_cleared,
+       (SELECT count(*) FROM quote)::int   AS quote_used
 FROM new_order
 `
 
 type CreateOrderParams struct {
-	UserID         int64
-	IdempotencyKey *string
-	Subtotal       int64
-	AddressLabel   string
-	RecipientName  string
-	RecipientPhone string
-	Province       string
-	City           string
-	District       string
-	Village        string
-	PostalCode     string
-	Address        string
-	Latitude       *float64
-	Longitude      *float64
-	ProductIds     []int64
-	ProductNames   []string
-	ProductSlugs   []string
-	Skus           []string
-	VariantLabels  []string
-	ImageUrls      []string
-	UnitPrices     []int64
-	Quantities     []int32
-	VariantIds     []int64
-	CartItemIds    []int64
+	UserID                int64
+	IdempotencyKey        *string
+	Subtotal              int64
+	ShippingCost          int64
+	Total                 int64
+	AddressLabel          string
+	RecipientName         string
+	RecipientPhone        string
+	Province              string
+	City                  string
+	District              string
+	Village               string
+	PostalCode            string
+	Address               string
+	Latitude              *float64
+	Longitude             *float64
+	ShippingProvider      *string
+	ShippingCourierCode   *string
+	ShippingCourierName   *string
+	ShippingServiceCode   *string
+	ShippingServiceName   *string
+	ShippingEstimatedDays *string
+	ShippingWeightGrams   *int32
+	ShippingAreaID        *string
+	ShippingAreaLabel     *string
+	ShippingOrigin        []byte
+	ProductIds            []int64
+	ProductNames          []string
+	ProductSlugs          []string
+	Skus                  []string
+	VariantLabels         []string
+	ImageUrls             []string
+	UnitPrices            []int64
+	Quantities            []int32
+	Weights               []int32
+	VariantIds            []int64
+	CartItemIds           []int64
+	ShippingQuoteID       string
 }
 
 type CreateOrderRow struct {
@@ -187,17 +224,23 @@ type CreateOrderRow struct {
 	ItemsCreated int32
 	StockUpdated int32
 	CartCleared  int32
+	QuoteUsed    int32
 }
 
-// CreateOrder writes the order, its items, the stock decrements and the
-// removal of the purchased cart lines in ONE statement (one round trip).
-// stock_updated < number of lines means stock ran out: the caller rolls
-// the whole transaction back.
+// CreateOrder writes the order with its shipping snapshot, its items, the
+// stock decrements, the removal of the purchased cart lines and the use of
+// the shipping quote in ONE statement (one round trip). stock_updated <
+// number of lines, or quote_used = 0, means something changed: the caller
+// rolls the whole transaction back. shipping_cost is the locked quote's
+// price and total = subtotal + shipping_cost (orders_amounts_chk), both
+// computed by the server, never taken from the client.
 func (q *Queries) CreateOrder(ctx context.Context, arg CreateOrderParams) (CreateOrderRow, error) {
 	row := q.db.QueryRow(ctx, createOrder,
 		arg.UserID,
 		arg.IdempotencyKey,
 		arg.Subtotal,
+		arg.ShippingCost,
+		arg.Total,
 		arg.AddressLabel,
 		arg.RecipientName,
 		arg.RecipientPhone,
@@ -209,6 +252,16 @@ func (q *Queries) CreateOrder(ctx context.Context, arg CreateOrderParams) (Creat
 		arg.Address,
 		arg.Latitude,
 		arg.Longitude,
+		arg.ShippingProvider,
+		arg.ShippingCourierCode,
+		arg.ShippingCourierName,
+		arg.ShippingServiceCode,
+		arg.ShippingServiceName,
+		arg.ShippingEstimatedDays,
+		arg.ShippingWeightGrams,
+		arg.ShippingAreaID,
+		arg.ShippingAreaLabel,
+		arg.ShippingOrigin,
 		arg.ProductIds,
 		arg.ProductNames,
 		arg.ProductSlugs,
@@ -217,8 +270,10 @@ func (q *Queries) CreateOrder(ctx context.Context, arg CreateOrderParams) (Creat
 		arg.ImageUrls,
 		arg.UnitPrices,
 		arg.Quantities,
+		arg.Weights,
 		arg.VariantIds,
 		arg.CartItemIds,
+		arg.ShippingQuoteID,
 	)
 	var i CreateOrderRow
 	err := row.Scan(
@@ -227,6 +282,7 @@ func (q *Queries) CreateOrder(ctx context.Context, arg CreateOrderParams) (Creat
 		&i.ItemsCreated,
 		&i.StockUpdated,
 		&i.CartCleared,
+		&i.QuoteUsed,
 	)
 	return i, err
 }
@@ -293,6 +349,9 @@ func (q *Queries) LockCheckoutCartLines(ctx context.Context, arg LockCheckoutCar
 const lockCheckoutVariants = `-- name: LockCheckoutVariants :many
 SELECT v.id, v.sku, v.price, v.original_price, v.stock,
        (v.active AND p.active AND c.active)::boolean AS available,
+       coalesce(v.weight_grams, p.weight_grams)::int AS weight_grams,
+       coalesce(p.length_cm, 0)::int AS length_cm, coalesce(p.width_cm, 0)::int AS width_cm,
+       coalesce(p.height_cm, 0)::int AS height_cm,
        p.id AS product_id, p.name AS product_name, p.slug AS product_slug,
        coalesce((SELECT i.url FROM product_images i WHERE i.product_id = p.id
                  ORDER BY i.display_order, i.id LIMIT 1), '')::text AS image_url,
@@ -316,6 +375,10 @@ type LockCheckoutVariantsRow struct {
 	OriginalPrice *int64
 	Stock         int32
 	Available     bool
+	WeightGrams   int32
+	LengthCm      int32
+	WidthCm       int32
+	HeightCm      int32
 	ProductID     int64
 	ProductName   string
 	ProductSlug   string
@@ -343,6 +406,10 @@ func (q *Queries) LockCheckoutVariants(ctx context.Context, ids []int64) ([]Lock
 			&i.OriginalPrice,
 			&i.Stock,
 			&i.Available,
+			&i.WeightGrams,
+			&i.LengthCm,
+			&i.WidthCm,
+			&i.HeightCm,
 			&i.ProductID,
 			&i.ProductName,
 			&i.ProductSlug,

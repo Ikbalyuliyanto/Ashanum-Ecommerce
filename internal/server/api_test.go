@@ -102,6 +102,31 @@ func want(t *testing.T, r apiRes, status int, code string) {
 }
 
 // signIn registers (or logs in) and keeps the tokens.
+// area returns the first delivery area found for q (GET /shipping/areas),
+// the id an address saves as shipping_area_id.
+func (c *apiClient) area(q string) string {
+	c.t.Helper()
+	res := c.get("/shipping/areas?q=" + url.QueryEscape(q))
+	l := res.list()
+	if res.status != http.StatusOK || len(l) == 0 {
+		c.t.Fatalf("area search %q: %s", q, res.raw)
+	}
+	return l[0].(map[string]any)["id"].(string)
+}
+
+// quote previews a checkout and returns the selected shipping quote id and
+// the total (items + shipping) to send with POST /orders.
+func (c *apiClient) quote(body map[string]any) (string, float64) {
+	c.t.Helper()
+	res := c.post("/checkout/preview", body)
+	sh, _ := res.data()["shipping"].(map[string]any)
+	sel, _ := sh["selected"].(map[string]any)
+	if res.status != http.StatusOK || sel == nil {
+		c.t.Fatalf("preview without shipping: %s", res.raw)
+	}
+	return sel["quote_id"].(string), res.data()["total"].(float64)
+}
+
 func (c *apiClient) signIn(email string) {
 	c.t.Helper()
 	res := c.post("/auth/register", map[string]any{"email": email, "password": "rahasia123", "device_name": "Test"})

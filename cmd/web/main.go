@@ -15,6 +15,9 @@
 //	                          existing account admin instead
 //	ecommerce cleanup-api-sessions
 //	                          delete expired / revoked mobile API sessions
+//	ecommerce reconcile-shipments [-limit N]
+//	                          refresh provider shipments still moving, list
+//	                          bookings without an answer, delete stale quotes
 //	ecommerce version         print the build version
 package main
 
@@ -39,6 +42,8 @@ import (
 	"ecommerce/internal/payment/midtrans"
 	"ecommerce/internal/review"
 	"ecommerce/internal/server"
+	"ecommerce/internal/shipping"
+	"ecommerce/internal/shipping/biteship"
 	"ecommerce/internal/validate"
 	"ecommerce/internal/view"
 	"ecommerce/web"
@@ -86,8 +91,10 @@ func run(args []string) error {
 		return createAdmin(ctx, cfg, args)
 	case "cleanup-api-sessions":
 		return cleanupAPISessions(ctx, cfg)
+	case "reconcile-shipments":
+		return reconcileShipments(ctx, cfg, log, args)
 	default:
-		return fmt.Errorf("unknown command %q (want serve, migrate, reconcile-payments, recalculate-ratings, create-admin, cleanup-api-sessions, version)", cmd)
+		return fmt.Errorf("unknown command %q (want serve, migrate, reconcile-payments, reconcile-shipments, recalculate-ratings, create-admin, cleanup-api-sessions, version)", cmd)
 	}
 }
 
@@ -131,6 +138,11 @@ func serve(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		return err
 	} else if mt != nil {
 		deps.PaymentProvider, deps.CheckoutOrigin = mt, mt.CheckoutOrigin()
+	}
+	if bs, err := shippingProvider(cfg, log); err != nil {
+		return err
+	} else if bs != nil {
+		deps.ShippingProvider = bs
 	}
 	handler := server.NewRouter(deps)
 
@@ -177,8 +189,62 @@ func paymentProvider(cfg *config.Config, log *slog.Logger) (*midtrans.Client, er
 		log.Warn("MIDTRANS_SERVER_KEY not set: online payment disabled")
 		return nil, nil
 	}
-	log.Warn("payments use the Midtrans SANDBOX: order totals exclude shipping cost; never accept real payments yet")
+	log.Warn("payments use the Midtrans SANDBOX: never accept real payments yet")
 	return midtrans.New(midtrans.Config{Env: cfg.Midtrans.Env, ServerKey: cfg.Midtrans.ServerKey})
+}
+
+// shippingProvider returns the Biteship client, or nil when
+// BITESHIP_API_KEY is not set (shipping off: orders cannot be placed).
+func shippingProvider(cfg *config.Config, log *slog.Logger) (*biteship.Client, error) {
+	if !cfg.Shipping.Enabled() {
+		log.Warn("BITESHIP_API_KEY not set: shipping rates are unavailable, checkout cannot place orders")
+		return nil, nil
+	}
+	b := cfg.Shipping.Biteship
+	if b.Env == biteship.EnvTest {
+		log.Warn("shipping uses the Biteship TESTING environment: no real pickup")
+	}
+	if b.WebhookSecret == "" {
+		log.Warn("BITESHIP_WEBHOOK_SECRET not set: shipping webhooks are refused; tracking updates via admin refresh or reconcile-shipments")
+	}
+	return biteship.New(biteship.Config{Env: b.Env, APIKey: b.APIKey, LiveEnabled: cfg.Shipping.LiveEnabled, BaseURL: b.BaseURL,
+		WebhookHeader: b.WebhookHeader, WebhookSecret: b.WebhookSecret})
+}
+
+// reconcileShipments runs one shipping reconciliation pass (see
+// shipping.Service.Reconcile). Stateless: call it from a systemd timer or
+// by hand.
+func reconcileShipments(ctx context.Context, cfg *config.Config, log *slog.Logger, args []string) error {
+	fs := flag.NewFlagSet("reconcile-shipments", flag.ContinueOnError)
+	limit := fs.Int("limit", 100, "maximum shipments per run")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	bs, err := shippingProvider(cfg, log)
+	if err != nil {
+		return err
+	}
+	if bs == nil {
+		return errors.New("reconcile-shipments: shipping is not configured (BITESHIP_API_KEY)")
+	}
+	db, err := database.Open(ctx, cfg.Database)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	rep, err := shipping.NewService(db, bs, server.ShippingOptions(cfg, log)).Reconcile(ctx, max(*limit, 1))
+	if err != nil {
+		return err
+	}
+	fmt.Printf("shipments checked: %d, errors: %d, bookings without answer: %d, stale quotes deleted: %d\n",
+		rep.Checked, rep.Errors, len(rep.StalePending), rep.QuotesDeleted)
+	for _, n := range rep.StalePending {
+		fmt.Printf("REVIEW %s: booking still PENDING; retry \"Buat Pengiriman\" in admin\n", n)
+	}
+	if rep.Errors > 0 {
+		return fmt.Errorf("reconcile-shipments: %d error(s), see log", rep.Errors)
+	}
+	return nil
 }
 
 // reconcilePayments runs one reconciliation pass (see payment.Service.Reconcile).

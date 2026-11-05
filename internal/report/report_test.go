@@ -12,6 +12,7 @@ import (
 	"ecommerce/internal/order"
 	"ecommerce/internal/product"
 	"ecommerce/internal/report"
+	"ecommerce/internal/shipping/shippingtest"
 	"ecommerce/internal/testutil"
 )
 
@@ -44,7 +45,7 @@ func TestReports(t *testing.T) {
 	c, _ := category.NewService(category.NewRepository(db)).Create(ctx, category.Input{Name: "Atasan", Active: true})
 	products := product.NewService(product.NewRepository(db))
 	mk := func(name, sku string, price int64, stock int) int64 {
-		if _, err := products.Create(ctx, product.Input{CategoryID: c.ID, Name: name, Active: true,
+		if _, err := products.Create(ctx, product.Input{WeightGrams: 100, CategoryID: c.ID, Name: name, Active: true,
 			Variants: []product.VariantInput{{SKU: sku, Price: price, Stock: stock}}}); err != nil {
 			t.Fatal(err)
 		}
@@ -55,16 +56,16 @@ func TestReports(t *testing.T) {
 	a, b := mk("Kaos A", "A-1", 100000, 50), mk("Kaos B", "B-1", 50000, 50)
 	mk("Kaos C", "C-1", 10000, 3) // low stock
 	mk("Kaos D", "D-1", 10000, 0) // out of stock
-	addrs := address.NewService(address.NewRepository(db))
-	co := checkout.NewService(checkout.NewRepository(db), addrs)
+	addrs := address.NewService(address.NewRepository(db), shippingtest.For(t, db).Service)
+	co := checkout.NewService(checkout.NewRepository(db), addrs, shippingtest.For(t, db).Service)
 	uid := testutil.CreateUser(t, db, "budi@example.com")
-	ad, err := addrs.Create(ctx, uid, address.Input{Label: "Rumah", RecipientName: "Budi", Phone: "081234567890", Province: "Jawa Barat",
+	ad, err := addrs.Create(ctx, uid, address.Input{ShippingAreaID: shippingtest.For(t, db).AreaID(t), Label: "Rumah", RecipientName: "Budi", Phone: "081234567890", Province: "Jawa Barat",
 		City: "Bandung", District: "Coblong", Village: "Dago", PostalCode: "40135", StreetAddress: "Jl. Juanda 1"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	buy := func(variant int64, qty int) string {
-		p, err := co.PlaceOrder(ctx, uid, checkout.PlaceRequest{Source: checkout.Source{VariantID: variant, Quantity: qty}, AddressID: ad.ID})
+		p, err := co.PlaceOrder(ctx, uid, quoted(t, co, uid, checkout.PlaceRequest{Source: checkout.Source{VariantID: variant, Quantity: qty}, AddressID: ad.ID}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -93,10 +94,11 @@ func TestReports(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rep.Sales.Revenue != 350000 || rep.Sales.PaidOrders != 2 || rep.Sales.Units != 5 {
+	// Revenue is what buyers paid (orders.total, shipping included: 9000 per order).
+	if rep.Sales.Revenue != 350000+2*9000 || rep.Sales.ItemsValue != 350000 || rep.Sales.PaidOrders != 2 || rep.Sales.Units != 5 {
 		t.Errorf("revenue: %+v (want 350000 from 2 paid orders, 5 units)", rep.Sales)
 	}
-	if rep.Sales.CancelledOrders != 1 || rep.Sales.CancelledAmount != 100000 {
+	if rep.Sales.CancelledOrders != 1 || rep.Sales.CancelledAmount != 100000+9000 {
 		t.Errorf("cancelled after payment: %+v", rep.Sales)
 	}
 	counts := map[order.Status]int{}
@@ -120,7 +122,7 @@ func TestReports(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rep, _ := svc.Build(ctx, rOld); rep.Sales.Revenue != 200000 || rep.Sales.PaidOrders != 1 {
+	if rep, _ := svc.Build(ctx, rOld); rep.Sales.Revenue != 200000+9000 || rep.Sales.PaidOrders != 1 {
 		t.Errorf("old range: %+v", rep.Sales)
 	}
 
@@ -128,8 +130,19 @@ func TestReports(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.WaitingPayment != 1 || d.WaitingConfirmation != 3 || d.SalesToday != 350000 || d.PaidToday != 2 ||
-		d.LowStock != 1 || d.OutOfStock != 1 || d.SalesWeek != 350000 {
+	if d.WaitingPayment != 1 || d.WaitingConfirmation != 3 || d.SalesToday != 350000+2*9000 || d.PaidToday != 2 ||
+		d.LowStock != 1 || d.OutOfStock != 1 || d.SalesWeek != 350000+2*9000 {
 		t.Errorf("dashboard: %+v", d)
 	}
+}
+
+// quoted adds the cheapest shipping quote for the request, as the checkout
+// page does before the buyer presses "Buat Pesanan".
+func quoted(t testing.TB, co *checkout.Service, userID int64, req checkout.PlaceRequest) checkout.PlaceRequest {
+	t.Helper()
+	d, err := co.Prepare(context.Background(), userID, req.Source, req.AddressID, "")
+	if err == nil && d.Shipping.Selected != nil {
+		req.ShippingQuoteID = d.Shipping.Selected.ID
+	}
+	return req
 }

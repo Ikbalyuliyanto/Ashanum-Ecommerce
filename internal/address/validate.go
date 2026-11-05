@@ -5,12 +5,24 @@ import (
 	"strconv"
 	"strings"
 
+	"ecommerce/internal/shipping"
 	"ecommerce/internal/validate"
 )
 
 // normalize validates input; errors are keyed by the form field names.
-func normalize(in Input) (fields, error) {
+// area is the looked-up delivery area (nil when none was chosen); its
+// province, city, district and postal code replace what was typed.
+func normalize(in Input, area *shipping.Area, areaErr string) (fields, error) {
 	errs := validate.Errors{}
+	if area != nil {
+		in.Province, in.City, in.District = area.Province, area.City, area.District
+		if area.PostalCode != "" {
+			in.PostalCode = area.PostalCode
+		}
+	}
+	if areaErr != "" {
+		errs.Add("shipping_area_id", areaErr)
+	}
 	f := fields{
 		Label:         validate.Text(in.Label),
 		RecipientName: validate.Text(in.RecipientName),
@@ -21,6 +33,7 @@ func normalize(in Input) (fields, error) {
 		PostalCode:    strings.TrimSpace(in.PostalCode),
 		StreetAddress: validate.Text(in.StreetAddress),
 		MapsURL:       strings.TrimSpace(in.MapsURL),
+		Area:          area,
 	}
 
 	validate.Length(errs, "label", f.Label, "Label alamat", 1, 30)

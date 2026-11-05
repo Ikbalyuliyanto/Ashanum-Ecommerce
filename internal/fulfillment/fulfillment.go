@@ -9,9 +9,11 @@
 // without paid_at. Completing an order sets completed_at, which makes its
 // items reviewable and starts the return window (packages review, returns).
 //
-// Shipping is manual in this phase: the admin types the courier, service
-// and tracking number. No courier API is called and nothing here is live
-// tracking. The Service has no HTTP dependency.
+// Shipping: the buyer chose a courier service at checkout (the order's
+// shipping snapshot). The shop books it with the provider (package
+// shipping: idempotent, never for an unpaid order) or, as a fallback, ships
+// manually by typing courier, service and tracking number here. At most one
+// shipment per order is active. The Service has no HTTP dependency.
 package fulfillment
 
 import (
@@ -30,6 +32,7 @@ import (
 	"ecommerce/internal/order"
 	"ecommerce/internal/payment"
 	"ecommerce/internal/returns"
+	"ecommerce/internal/shipping"
 	"ecommerce/internal/validate"
 )
 
@@ -38,6 +41,9 @@ var (
 	ErrNotPaid           = errors.New("fulfillment: order is not paid")
 	ErrInvalidTransition = errors.New("fulfillment: status change not allowed")
 	ErrNotCancellable    = errors.New("fulfillment: order can no longer be cancelled")
+	// ErrShipmentActive: the order already has an active shipment (booked
+	// with the provider); cancel that first.
+	ErrShipmentActive = errors.New("fulfillment: order has an active shipment")
 )
 
 // Message is the admin-facing text for a known error, or "".
@@ -51,6 +57,8 @@ func Message(err error) string {
 		return "Pesanan yang sudah dikirim atau selesai tidak bisa dibatalkan. Gunakan pengembalian barang."
 	case errors.Is(err, payment.ErrCancelUnavailable):
 		return "Transaksi di Midtrans belum bisa dibatalkan. Coba lagi beberapa saat."
+	case errors.Is(err, ErrShipmentActive):
+		return "Pesanan sudah punya pengiriman aktif di penyedia. Batalkan pengiriman itu terlebih dahulu."
 	}
 	return ""
 }
@@ -170,7 +178,9 @@ type Detail struct {
 	Buyer         Buyer
 	Address       order.Address
 	Items         []order.Item
-	Shipment      *order.Shipment
+	Shipping      *order.ShippingChoice // chosen at checkout (nil for older orders)
+	Shipment      *order.Shipment       // the active shipment, with events
+	Shipments     []shipping.Shipment   // every shipment, newest first (failed/cancelled bookings too)
 	Payments      []payment.Attempt
 	Returns       []ReturnRef
 	Refunds       []RefundRef
@@ -188,9 +198,31 @@ func (d Detail) Quantity() int {
 func (d Detail) CanConfirm() bool {
 	return d.Status == order.StatusWaitingConfirmation && d.PaidAt != nil
 }
-func (d Detail) CanShip() bool     { return d.Status == order.StatusProcessing }
+
+// CanShip: the manual shipment form (fallback) — only without an active
+// shipment.
+func (d Detail) CanShip() bool { return d.Status == order.StatusProcessing && d.Shipment == nil }
+
+// CanBook: booking the buyer's courier choice with the provider.
+func (d Detail) CanBook() bool {
+	return d.Status == order.StatusProcessing && d.PaidAt != nil && d.Shipping != nil && d.Shipment == nil
+}
+
+// PastShipments are the inactive (failed or cancelled) shipments.
+func (d Detail) PastShipments() []shipping.Shipment {
+	var out []shipping.Shipment
+	for _, s := range d.Shipments {
+		if !s.Status.Active() {
+			out = append(out, s)
+		}
+	}
+	return out
+}
 func (d Detail) CanComplete() bool { return d.Status == order.StatusShipped }
 func (d Detail) CanCancel() bool {
+	if d.Shipment != nil {
+		return false // a booked pickup is cancelled first (CancelBooking)
+	}
 	switch d.Status {
 	case order.StatusWaitingPayment, order.StatusWaitingConfirmation, order.StatusProcessing:
 		return true
@@ -292,12 +324,31 @@ func (s *Service) Get(ctx context.Context, number string) (Detail, error) {
 		Address: order.Address{Label: row.AddressLabel, RecipientName: row.RecipientName, Phone: row.RecipientPhone,
 			Province: row.Province, City: row.City, District: row.District, Village: row.Village, PostalCode: row.PostalCode,
 			Street: row.Address, Latitude: row.Latitude, Longitude: row.Longitude}}
-	if row.CourierName != nil && row.ShippedAt != nil {
-		d.Shipment = &order.Shipment{Courier: *row.CourierName, Service: deref(row.ServiceName), Tracking: deref(row.TrackingNumber),
-			Note: deref(row.ShipmentNote), ShippedAt: *row.ShippedAt}
-	}
+	d.Shipping = order.ShippingColumns{Provider: row.ShippingProvider, CourierCode: row.ShippingCourierCode,
+		CourierName: row.ShippingCourierName, ServiceCode: row.ShippingServiceCode, ServiceName: row.ShippingServiceName,
+		EstimatedDays: row.ShippingEstimatedDays, WeightGrams: row.ShippingWeightGrams, AreaID: row.ShippingAreaID,
+		AreaLabel: row.ShippingAreaLabel}.Choice()
+	d.Shipment = order.ShipmentColumns{ID: row.ShipmentID, Method: row.ShipmentMethod, Provider: row.ShipmentProvider,
+		Courier: row.CourierName, CourierCode: row.ShipmentCourierCode, Service: row.ServiceName,
+		ServiceCode: row.ShipmentServiceCode, Tracking: row.TrackingNumber, TrackingURL: row.ShipmentTrackingUrl,
+		Status: row.ShipmentStatus, EstimatedDays: row.ShipmentEstimatedDays, Note: row.ShipmentNote,
+		FailureReason: row.ShipmentFailureReason, ShippedAt: row.ShippedAt, BookedAt: row.ShipmentBookedAt,
+		DeliveredAt: row.ShipmentDeliveredAt, CancelledAt: row.ShipmentCancelledAt, SyncedAt: row.ShipmentSyncedAt,
+		CreatedAt: row.ShipmentCreatedAt}.Shipment()
 	if d.Items, err = s.orders.Items(ctx, d.ID); err != nil {
 		return Detail{}, err
+	}
+	if err = s.orders.Timeline(ctx, d.Shipment); err != nil {
+		return Detail{}, err
+	}
+	if d.Shipment != nil || d.Status == order.StatusProcessing {
+		rows, err := s.q.OrderShipments(ctx, d.ID)
+		if err != nil {
+			return Detail{}, err
+		}
+		for _, r := range rows {
+			d.Shipments = append(d.Shipments, shipping.FromRow(r))
+		}
 	}
 	if s.payments != nil {
 		if d.Payments, err = s.payments.Attempts(ctx, d.ID); err != nil {
@@ -383,7 +434,10 @@ func (s *Service) Confirm(ctx context.Context, adminID int64, number string) err
 	})
 }
 
-// Ship records the manual shipment and moves PROCESSING → SHIPPED.
+// Ship records a manual shipment (the fallback when the provider booking is
+// not used or failed) and moves PROCESSING → SHIPPED. An order with an
+// active provider shipment is refused (ErrShipmentActive) by the
+// one-active-shipment index.
 func (s *Service) Ship(ctx context.Context, adminID int64, number string, in ShipInput) error {
 	in.Courier, in.Service, in.Tracking = validate.Text(in.Courier), validate.Text(in.Service), validate.Text(in.Tracking)
 	in.Note = strings.TrimSpace(in.Note)
@@ -405,8 +459,13 @@ func (s *Service) Ship(ctx context.Context, adminID int64, number string, in Shi
 		if err := one(q.ShipOrder(ctx, o.ID)); err != nil {
 			return "", nil, err
 		}
-		if err := q.CreateShipment(ctx, dbgen.CreateShipmentParams{OrderID: o.ID, CourierName: in.Courier, ServiceName: in.Service,
-			TrackingNumber: in.Tracking, Note: in.Note, ShippedAt: time.Now(), CreatedBy: &adminID}); err != nil {
+		now := time.Now()
+		err := q.CreateShipment(ctx, dbgen.CreateShipmentParams{OrderID: o.ID, CourierName: in.Courier, ServiceName: in.Service,
+			TrackingNumber: in.Tracking, Note: in.Note, ShippedAt: &now, CreatedBy: &adminID})
+		if database.IsUniqueViolation(err, "shipments_active_order_idx") {
+			return "", nil, ErrShipmentActive
+		}
+		if err != nil {
 			return "", nil, err
 		}
 		return "order.ship", map[string]any{"from": string(o.Status), "to": string(order.StatusShipped),
@@ -479,6 +538,11 @@ func (s *Service) Cancel(ctx context.Context, adminID int64, number, note string
 		}
 		if !o.Paid || o.StockRestored {
 			return "", nil, ErrInvalidTransition
+		}
+		if sh, err := q.ActiveShipment(ctx, o.ID); err == nil && sh.Method == "PROVIDER" {
+			return "", nil, ErrShipmentActive // a booked pickup must be cancelled with the provider first
+		} else if err != nil && !database.IsNoRows(err) {
+			return "", nil, err
 		}
 		pay, err := q.LockPaidPayment(ctx, o.ID)
 		if database.IsNoRows(err) {

@@ -27,7 +27,7 @@ func TestAdminProductManagement(t *testing.T) {
 	}
 
 	in := product.NewProduct{
-		Info:       product.Info{CategoryID: c.ID, Name: "Kemeja Linen", Brand: "Ashanum", Active: true},
+		Info:       product.Info{CategoryID: c.ID, Name: "Kemeja Linen", Brand: "Ashanum", Active: true, WeightGrams: 300},
 		ImageURLs:  []string{"https://res.cloudinary.com/demo/image/upload/kemeja.jpg"},
 		Attributes: []product.AttributeInput{{Name: "Warna", Values: []string{"Putih", "Biru Muda"}}, {Name: "Ukuran", Values: []string{"S", "M", "L"}}},
 		SKUPrefix:  "kemeja linen", Price: 199000, Stock: 4,
@@ -61,7 +61,7 @@ func TestAdminProductManagement(t *testing.T) {
 	}
 
 	// Edit the product fields; price/stock/rating are not part of the form.
-	info := product.Info{CategoryID: c.ID, Name: "Kemeja Linen Premium", Slug: "kemeja-linen-premium", Active: true, Featured: true}
+	info := product.Info{CategoryID: c.ID, Name: "Kemeja Linen Premium", Slug: "kemeja-linen-premium", Active: true, Featured: true, WeightGrams: 300}
 	if err := svc.UpdateInfo(ctx, admin, id, info, nil); err != nil {
 		t.Fatal(err)
 	}

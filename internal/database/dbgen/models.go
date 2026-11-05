@@ -79,35 +79,45 @@ type InventoryAdjustment struct {
 }
 
 type Order struct {
-	ID              int64
-	OrderNumber     string
-	UserID          int64
-	IdempotencyKey  *string
-	Status          string
-	Subtotal        int64
-	ShippingCost    int64
-	Discount        int64
-	Total           int64
-	AddressLabel    string
-	RecipientName   string
-	RecipientPhone  string
-	Province        string
-	City            string
-	District        string
-	Village         string
-	PostalCode      string
-	Address         string
-	Latitude        *float64
-	Longitude       *float64
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	PaymentDueAt    time.Time
-	PaidAt          *time.Time
-	CancelledAt     *time.Time
-	CancelReason    *string
-	StockRestoredAt *time.Time
-	CompletedAt     *time.Time
-	ConfirmedAt     *time.Time
+	ID                    int64
+	OrderNumber           string
+	UserID                int64
+	IdempotencyKey        *string
+	Status                string
+	Subtotal              int64
+	ShippingCost          int64
+	Discount              int64
+	Total                 int64
+	AddressLabel          string
+	RecipientName         string
+	RecipientPhone        string
+	Province              string
+	City                  string
+	District              string
+	Village               string
+	PostalCode            string
+	Address               string
+	Latitude              *float64
+	Longitude             *float64
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
+	PaymentDueAt          time.Time
+	PaidAt                *time.Time
+	CancelledAt           *time.Time
+	CancelReason          *string
+	StockRestoredAt       *time.Time
+	CompletedAt           *time.Time
+	ConfirmedAt           *time.Time
+	ShippingProvider      *string
+	ShippingCourierCode   *string
+	ShippingCourierName   *string
+	ShippingServiceCode   *string
+	ShippingServiceName   *string
+	ShippingEstimatedDays *string
+	ShippingWeightGrams   *int32
+	ShippingAreaID        *string
+	ShippingAreaLabel     *string
+	ShippingOrigin        []byte
 }
 
 type OrderItem struct {
@@ -124,6 +134,7 @@ type OrderItem struct {
 	Quantity     int32
 	Subtotal     int64
 	CreatedAt    time.Time
+	WeightGrams  *int32
 }
 
 type Payment struct {
@@ -180,6 +191,10 @@ type Product struct {
 	SearchVector  interface{}
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+	WeightGrams   int32
+	LengthCm      *int32
+	WidthCm       *int32
+	HeightCm      *int32
 }
 
 type ProductAttribute struct {
@@ -231,6 +246,7 @@ type ProductVariant struct {
 	Active        bool
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+	WeightGrams   *int32
 }
 
 type ProductVariantValue struct {
@@ -323,15 +339,80 @@ type Session struct {
 }
 
 type Shipment struct {
-	ID             int64
-	OrderID        int64
-	Method         string
+	ID                 int64
+	OrderID            int64
+	Method             string
+	CourierName        string
+	ServiceName        string
+	TrackingNumber     string
+	Note               string
+	ShippedAt          *time.Time
+	CreatedBy          *int64
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	Provider           *string
+	ProviderShipmentID *string
+	ProviderTrackingID *string
+	CourierCode        string
+	ServiceCode        string
+	Status             string
+	RawStatus          *string
+	EstimatedDays      string
+	TrackingUrl        *string
+	BookingKey         *string
+	BookingStartedAt   *time.Time
+	FailureReason      *string
+	BookedAt           *time.Time
+	DeliveredAt        *time.Time
+	CancelledAt        *time.Time
+	LastSyncedAt       *time.Time
+}
+
+type ShipmentEvent struct {
+	ID          int64
+	ShipmentID  int64
+	EventKey    string
+	Status      string
+	RawStatus   string
+	Description string
+	Location    string
+	Source      string
+	EventTime   time.Time
+	CreatedAt   time.Time
+}
+
+type ShippingArea struct {
+	Provider       string
+	ProviderAreaID string
+	Label          string
+	Province       string
+	City           string
+	District       string
+	PostalCode     string
+	Latitude       *float64
+	Longitude      *float64
+	CachedAt       time.Time
+}
+
+type ShippingQuote struct {
+	ID             string
+	UserID         int64
+	Provider       string
+	QuoteKey       string
+	OriginKey      string
+	DestinationKey string
+	PackageHash    string
+	WeightGrams    int32
+	CourierCode    string
 	CourierName    string
+	ServiceCode    string
 	ServiceName    string
-	TrackingNumber string
-	Note           string
-	ShippedAt      time.Time
-	CreatedBy      *int64
+	Description    string
+	EstimatedDays  string
+	Price          int64
+	ExpiresAt      time.Time
+	OrderID        *int64
+	UsedAt         *time.Time
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }
@@ -346,23 +427,26 @@ type User struct {
 }
 
 type UserAddress struct {
-	ID            int64
-	UserID        int64
-	Label         string
-	RecipientName string
-	Phone         string
-	Province      string
-	City          string
-	District      string
-	Village       string
-	PostalCode    string
-	StreetAddress string
-	Latitude      *float64
-	Longitude     *float64
-	MapsUrl       *string
-	IsPrimary     bool
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID                   int64
+	UserID               int64
+	Label                string
+	RecipientName        string
+	Phone                string
+	Province             string
+	City                 string
+	District             string
+	Village              string
+	PostalCode           string
+	StreetAddress        string
+	Latitude             *float64
+	Longitude            *float64
+	MapsUrl              *string
+	IsPrimary            bool
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+	ShippingAreaProvider *string
+	ShippingAreaID       *string
+	ShippingAreaLabel    *string
 }
 
 type UserProfile struct {

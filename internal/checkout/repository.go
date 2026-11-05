@@ -10,6 +10,7 @@ import (
 	"ecommerce/internal/cart"
 	"ecommerce/internal/database"
 	"ecommerce/internal/database/dbgen"
+	"ecommerce/internal/shipping"
 )
 
 var errDuplicateKey = errors.New("checkout: idempotency key already used")
@@ -112,7 +113,11 @@ func (r *Repository) Lines(ctx context.Context, userID int64, src Source) ([]Lin
 		if v.OriginalPrice != nil {
 			l.OriginalPrice = *v.OriginalPrice
 		}
+		l.WeightGrams, l.LengthCM, l.WidthCM, l.HeightCM = int(v.WeightGrams), int(v.LengthCm), int(v.WidthCm), int(v.HeightCm)
 		l.Problem = evaluate(v.Available, l.Stock, l.Quantity)
+		if l.Problem == ProblemNone && l.WeightGrams <= 0 {
+			l.Problem = ProblemNoWeight
+		}
 		lines = append(lines, l)
 	}
 	return lines, nil
@@ -146,14 +151,32 @@ type created struct {
 	ID           int64
 	Number       string
 	StockUpdated int
+	QuoteUsed    bool
 }
 
-// Create writes order, items, stock decrements and cart cleanup in one
+// Create writes order (with the shipping snapshot from the validated
+// quote), items, stock decrements, cart cleanup and the quote's use in one
 // statement (see CreateOrder in queries/checkout.sql).
-func (r *Repository) Create(ctx context.Context, userID int64, key string, a dbgen.UserAddress, lines []Line, subtotal int64) (created, error) {
+func (r *Repository) Create(ctx context.Context, userID int64, key string, a dbgen.UserAddress, lines []Line, subtotal int64, sq shipping.UsedQuote) (created, error) {
+	weight := int32(sq.WeightGrams)
 	p := dbgen.CreateOrderParams{
-		UserID:         userID,
-		Subtotal:       subtotal,
+		UserID:       userID,
+		Subtotal:     subtotal,
+		ShippingCost: sq.Rate.Price,
+		Total:        subtotal + sq.Rate.Price,
+
+		ShippingProvider:      &sq.Provider,
+		ShippingCourierCode:   &sq.Rate.CourierCode,
+		ShippingCourierName:   &sq.Rate.CourierName,
+		ShippingServiceCode:   &sq.Rate.ServiceCode,
+		ShippingServiceName:   &sq.Rate.ServiceName,
+		ShippingEstimatedDays: &sq.Rate.EstimatedDays,
+		ShippingWeightGrams:   &weight,
+		ShippingAreaID:        a.ShippingAreaID,
+		ShippingAreaLabel:     a.ShippingAreaLabel,
+		ShippingOrigin:        shipping.OriginSnapshot(sq.Origin),
+		ShippingQuoteID:       sq.ID,
+
 		AddressLabel:   a.Label,
 		RecipientName:  a.RecipientName,
 		RecipientPhone: a.Phone,
@@ -180,6 +203,7 @@ func (r *Repository) Create(ctx context.Context, userID int64, key string, a dbg
 		p.ImageUrls = append(p.ImageUrls, l.ImageURL)
 		p.UnitPrices = append(p.UnitPrices, l.UnitPrice)
 		p.Quantities = append(p.Quantities, int32(l.Quantity))
+		p.Weights = append(p.Weights, int32(l.WeightGrams))
 		if l.CartItemID != 0 {
 			p.CartItemIds = append(p.CartItemIds, l.CartItemID)
 		}
@@ -191,7 +215,7 @@ func (r *Repository) Create(ctx context.Context, userID int64, key string, a dbg
 	if err != nil {
 		return created{}, err
 	}
-	return created{ID: row.ID, Number: row.OrderNumber, StockUpdated: int(row.StockUpdated)}, nil
+	return created{ID: row.ID, Number: row.OrderNumber, StockUpdated: int(row.StockUpdated), QuoteUsed: row.QuoteUsed == 1}, nil
 }
 
 // OrderByKey finds an order created earlier with the same idempotency key.

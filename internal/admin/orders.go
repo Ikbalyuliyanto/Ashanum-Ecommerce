@@ -11,6 +11,7 @@ import (
 	"ecommerce/internal/fulfillment"
 	"ecommerce/internal/payment"
 	"ecommerce/internal/report"
+	"ecommerce/internal/shipping"
 	"ecommerce/internal/validate"
 	"ecommerce/internal/view"
 )
@@ -53,6 +54,9 @@ type orderPage struct {
 	Audit  []audit.Log
 	Ship   fulfillment.ShipInput
 	Errors validate.Errors
+	// BookingEnabled: a shipping provider is configured.
+	BookingEnabled bool
+	ProviderName   string
 }
 
 func (h *Handler) order(w http.ResponseWriter, r *http.Request) {
@@ -74,7 +78,74 @@ func (h *Handler) renderOrder(w http.ResponseWriter, r *http.Request, status int
 		h.View.ServerError(w, r, err)
 		return
 	}
-	h.View.Render(w, r, status, "admin/order", orderPage{shell: shell{Nav: navOrders}, Order: d, Audit: logs, Ship: ship, Errors: errs})
+	page := orderPage{shell: shell{Nav: navOrders}, Order: d, Audit: logs, Ship: ship, Errors: errs}
+	if h.Shipping != nil && h.Shipping.Enabled() {
+		page.BookingEnabled, page.ProviderName = true, shipping.ProviderLabel(h.Shipping.ProviderName())
+	}
+	h.View.Render(w, r, status, "admin/order", page)
+}
+
+// orderBook books the buyer's courier choice with the shipping provider.
+// A double submit never books twice (see shipping.Service.Book).
+func (h *Handler) orderBook(w http.ResponseWriter, r *http.Request) {
+	n := chi.URLParam(r, "number")
+	if err := h.shipping().Book(r.Context(), adminID(r), n); err != nil {
+		h.shipmentFail(w, r, n, err)
+		return
+	}
+	h.done(w, r, orderPath(n), "Pengiriman dibuat di penyedia. Kurir akan menjemput paket; status diperbarui otomatis.")
+}
+
+// orderShipmentSync refreshes the shipment status from the provider.
+func (h *Handler) orderShipmentSync(w http.ResponseWriter, r *http.Request) {
+	n := chi.URLParam(r, "number")
+	if err := h.shipping().Sync(r.Context(), adminID(r), n); err != nil {
+		h.shipmentFail(w, r, n, err)
+		return
+	}
+	h.done(w, r, orderPath(n), "Status pengiriman diperbarui dari penyedia.")
+}
+
+// orderShipmentCancel cancels the provider booking before pickup.
+func (h *Handler) orderShipmentCancel(w http.ResponseWriter, r *http.Request) {
+	n := chi.URLParam(r, "number")
+	if err := view.ParseForm(w, r); err != nil {
+		h.View.Error(w, r, http.StatusBadRequest)
+		return
+	}
+	if err := h.shipping().CancelBooking(r.Context(), adminID(r), n, r.PostFormValue("reason")); err != nil {
+		h.shipmentFail(w, r, n, err)
+		return
+	}
+	h.done(w, r, orderPath(n), "Pengiriman dibatalkan. Pesanan tetap diproses: buat pengiriman lagi atau kirim manual.")
+}
+
+func (h *Handler) shipping() *shipping.Service {
+	if h.Shipping == nil {
+		return shipping.NewService(nil, nil, shipping.Options{}) // not configured: every call is ErrNotConfigured
+	}
+	return h.Shipping
+}
+
+func (h *Handler) shipmentFail(w http.ResponseWriter, r *http.Request, number string, err error) {
+	if errors.Is(err, shipping.ErrNotFound) && !h.orderExists(r, number) {
+		h.View.Error(w, r, http.StatusNotFound)
+		return
+	}
+	h.refuse(w, r, orderPath(number), err, func(err error) string {
+		if errors.Is(err, shipping.ErrNotConfigured) {
+			return "Penyedia pengiriman belum dikonfigurasi (BITESHIP_API_KEY). Gunakan pengiriman manual."
+		}
+		if errors.Is(err, shipping.ErrUnavailable) {
+			return "Penyedia pengiriman tidak dapat dihubungi. Pesanan tidak berubah; coba lagi beberapa saat (permintaan yang sama tidak akan membuat pengiriman ganda)."
+		}
+		return shipping.Message(err)
+	})
+}
+
+func (h *Handler) orderExists(r *http.Request, number string) bool {
+	_, err := h.Orders.Get(r.Context(), number)
+	return err == nil
 }
 
 func orderPath(number string) string { return "/admin/orders/" + number }

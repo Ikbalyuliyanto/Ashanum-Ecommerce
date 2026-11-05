@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,6 +33,7 @@ import (
 	"ecommerce/internal/report"
 	"ecommerce/internal/returns"
 	"ecommerce/internal/review"
+	"ecommerce/internal/shipping"
 	"ecommerce/internal/user"
 	"ecommerce/internal/view"
 )
@@ -48,6 +50,23 @@ type Deps struct {
 	// CheckoutOrigin is the provider's hosted checkout origin, allowed in
 	// the CSP form-action (the pay form redirects there).
 	CheckoutOrigin string
+
+	// ShippingProvider is nil when no shipping provider is configured
+	// (checkout then cannot place orders: no shipping cost 0 fallback).
+	ShippingProvider shipping.Provider
+}
+
+// ShippingOptions maps the configuration to the shipping service options.
+func ShippingOptions(cfg *config.Config, log *slog.Logger) shipping.Options {
+	o := cfg.Shipping.Origin
+	origin := shipping.Origin{Name: o.Name, Phone: o.Phone, Address: o.Address, PostalCode: o.PostalCode, AreaID: o.AreaID}
+	if lat, err := strconv.ParseFloat(o.Latitude, 64); err == nil {
+		if lng, err := strconv.ParseFloat(o.Longitude, 64); err == nil {
+			origin.Latitude, origin.Longitude = &lat, &lng
+		}
+	}
+	return shipping.Options{Origin: origin, Couriers: cfg.Shipping.Couriers, RateTTL: cfg.Shipping.RateCacheTTL,
+		QuoteTTL: cfg.Shipping.QuoteTTL, Log: log}
 }
 
 // NewRouter is the composition root: it builds repositories, services and
@@ -56,7 +75,8 @@ func NewRouter(d Deps) http.Handler {
 	authSvc := auth.NewService(auth.NewRepository(d.DB), d.Config.Session.Secret)
 	authSvc.ConfigureAPI(d.Config.API.AccessTTL, d.Config.API.RefreshTTL)
 	userSvc := user.NewService(user.NewRepository(d.DB))
-	addressSvc := address.NewService(address.NewRepository(d.DB))
+	shippingSvc := shipping.NewService(d.DB, d.ShippingProvider, ShippingOptions(d.Config, d.Log))
+	addressSvc := address.NewService(address.NewRepository(d.DB), shippingSvc)
 	categorySvc := category.NewService(category.NewRepository(d.DB))
 	productSvc := product.NewService(product.NewRepository(d.DB))
 	cartSvc := cart.NewService(cart.NewRepository(d.DB))
@@ -69,7 +89,7 @@ func NewRouter(d Deps) http.Handler {
 	reviewSvc := review.NewService(review.NewRepository(d.DB))
 	returnSvc := returns.NewService(returns.NewRepository(d.DB), returns.Options{WindowDays: d.Config.Returns.WindowDays})
 	orderSvc := order.NewService(order.NewRepository(d.DB), order.Deps{Payments: paymentSvc, Returns: returnSvc})
-	checkoutSvc := checkout.NewService(checkout.NewRepository(d.DB), addressSvc)
+	checkoutSvc := checkout.NewService(checkout.NewRepository(d.DB), addressSvc, shippingSvc)
 	inventorySvc := inventory.NewService(d.DB, d.Config.Inventory.LowStockThreshold)
 
 	// Header cart badge on full pages for signed-in users (one small query);
@@ -133,13 +153,14 @@ func NewRouter(d Deps) http.Handler {
 	reviewH.PublicRoutes(r)
 	authH.Routes(r)
 	paymentH.WebhookRoutes(r)
+	shipping.NewWebhookHandler(shippingSvc, d.Log).Routes(r)
 
 	// REST API for mobile apps: the same services, a JSON transport and
 	// Bearer-token API sessions (no cookies).
 	r.Route(api.Prefix, api.NewHandler(api.Deps{
 		Log: d.Log, Auth: authSvc, Users: userSvc, Addresses: addressSvc, Categories: categorySvc,
 		Products: productSvc, Cart: cartSvc, Checkout: checkoutSvc, Orders: orderSvc, Payments: paymentSvc,
-		Reviews: reviewSvc, Returns: returnSvc, CORSOrigins: d.Config.API.CORSOrigins,
+		Reviews: reviewSvc, Returns: returnSvc, Shipping: shippingSvc, CORSOrigins: d.Config.API.CORSOrigins,
 	}).Routes)
 
 	// Back office: signed-in ADMIN only. Guests go to the login page; any
@@ -155,6 +176,7 @@ func NewRouter(d Deps) http.Handler {
 		Reviews:    reviewSvc,
 		Reports:    report.NewService(d.DB, inventorySvc),
 		Audit:      audit.NewService(d.DB),
+		Shipping:   shippingSvc,
 	})
 	r.Route("/admin", func(r chi.Router) {
 		r.Use(auth.RequireAdmin(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -166,7 +188,7 @@ func NewRouter(d Deps) http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(auth.RequireUser)
 		user.NewHandler(userSvc, d.View).Routes(r)
-		address.NewHandler(addressSvc, d.View).Routes(r)
+		address.NewHandler(addressSvc, shippingSvc, d.View).Routes(r)
 		cart.NewHandler(cartSvc, d.View).Routes(r)
 		checkout.NewHandler(checkoutSvc, cartSvc, orderSvc, d.View).Routes(r)
 		order.NewHandler(orderSvc, d.View).Routes(r)

@@ -95,6 +95,7 @@ func (r *Renderer) funcs() template.FuncMap {
 		"initial":     initial,
 		"hasPrefix":   strings.HasPrefix,
 		"rupiah":      FormatRupiah,
+		"grams":       FormatWeight,
 		"sold":        FormatSold,
 		"datetime":    FormatDateTime,
 		"date":        FormatDate,

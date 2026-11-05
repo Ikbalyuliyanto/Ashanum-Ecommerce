@@ -57,6 +57,18 @@ type productForm struct {
 	Price         string
 	OriginalPrice string
 	Stock         string
+	// Shipping (same names as product.Info for the shared template).
+	WeightGrams int
+	LengthCM    int
+	WidthCM     int
+	HeightCM    int
+}
+
+// shippingFields reads the weight and dimension inputs; empty is 0
+// (dimensions unknown), anything not a number is refused by validation.
+func shippingFields(r *http.Request) (weight, length, width, height int) {
+	return optionalInt(r.PostFormValue("weight_grams")), optionalInt(r.PostFormValue("length_cm")),
+		optionalInt(r.PostFormValue("width_cm")), optionalInt(r.PostFormValue("height_cm"))
 }
 
 type productNewPage struct {
@@ -101,9 +113,11 @@ func (h *Handler) productCreate(w http.ResponseWriter, r *http.Request) {
 		SKUPrefix: r.PostFormValue("sku_prefix"), Price: r.PostFormValue("price"), OriginalPrice: r.PostFormValue("original_price"),
 		Stock: r.PostFormValue("stock"),
 	}
+	f.WeightGrams, f.LengthCM, f.WidthCM, f.HeightCM = shippingFields(r)
 	in := product.NewProduct{
 		Info: product.Info{CategoryID: f.CategoryID, Name: f.Name, Slug: strings.TrimSpace(f.Slug), Brand: f.Brand,
-			Description: f.Description, Active: f.Active, Featured: f.Featured, FlashSale: f.FlashSale},
+			Description: f.Description, Active: f.Active, Featured: f.Featured, FlashSale: f.FlashSale,
+			WeightGrams: f.WeightGrams, LengthCM: f.LengthCM, WidthCM: f.WidthCM, HeightCM: f.HeightCM},
 		ImageURLs: lines(f.Images), SKUPrefix: f.SKUPrefix,
 		Price: parseRupiah(f.Price), OriginalPrice: parseRupiah(f.OriginalPrice), Stock: parseInt(f.Stock),
 	}
@@ -174,7 +188,8 @@ func (h *Handler) renderProductEdit(w http.ResponseWriter, r *http.Request, stat
 	data := productEditPage{shell: shell{Nav: navProducts}, Product: p, Categories: cats, History: hist, Errors: errs,
 		Threshold: h.Inventory.LowStockThreshold(),
 		Info: product.Info{CategoryID: p.CategoryID, Name: p.Name, Slug: p.Slug, Brand: p.Brand, Description: p.Description,
-			Active: p.Active, Featured: p.Featured, FlashSale: p.FlashSale}, Images: p.ImageText()}
+			Active: p.Active, Featured: p.Featured, FlashSale: p.FlashSale, WeightGrams: p.WeightGrams, LengthCM: p.LengthCM,
+			WidthCM: p.WidthCM, HeightCM: p.HeightCM}, Images: p.ImageText()}
 	if info != nil {
 		data.Info, data.Images = *info, images
 	}
@@ -192,6 +207,7 @@ func (h *Handler) productUpdate(w http.ResponseWriter, r *http.Request) {
 	info := product.Info{CategoryID: int64(parseInt(r.PostFormValue("category_id"))), Name: r.PostFormValue("name"),
 		Slug: strings.TrimSpace(r.PostFormValue("slug")), Brand: r.PostFormValue("brand"), Description: r.PostFormValue("description"),
 		Active: r.PostFormValue("active") == "1", Featured: r.PostFormValue("featured") == "1", FlashSale: r.PostFormValue("flash_sale") == "1"}
+	info.WeightGrams, info.LengthCM, info.WidthCM, info.HeightCM = shippingFields(r)
 	images := r.PostFormValue("images")
 	err := h.Products.UpdateInfo(r.Context(), adminID(r), id, info, lines(images))
 	var verr validate.Errors
@@ -249,7 +265,8 @@ func (h *Handler) variantCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	in := product.VariantInput{SKU: r.PostFormValue("sku"), Price: parseRupiah(r.PostFormValue("price")),
-		OriginalPrice: parseRupiah(r.PostFormValue("original_price")), Stock: parseInt(r.PostFormValue("stock")), Options: opts}
+		OriginalPrice: parseRupiah(r.PostFormValue("original_price")), Stock: parseInt(r.PostFormValue("stock")), Options: opts,
+		WeightGrams: optionalInt(r.PostFormValue("weight_grams"))}
 	_, err := h.Products.AddVariant(r.Context(), adminID(r), id, in)
 	h.catalogResult(w, r, productPath(id)+"#varian", err, "Varian ditambahkan.")
 }
@@ -261,7 +278,8 @@ func (h *Handler) variantUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in := product.VariantUpdate{SKU: r.PostFormValue("sku"), Price: parseRupiah(r.PostFormValue("price")),
-		OriginalPrice: parseRupiah(r.PostFormValue("original_price")), Active: r.PostFormValue("active") == "1"}
+		OriginalPrice: parseRupiah(r.PostFormValue("original_price")), Active: r.PostFormValue("active") == "1",
+		WeightGrams: optionalInt(r.PostFormValue("weight_grams"))}
 	err := h.Products.UpdateVariant(r.Context(), adminID(r), id, vid, in)
 	h.catalogResult(w, r, productPath(id)+"#varian", err, "Varian disimpan.")
 }

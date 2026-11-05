@@ -106,15 +106,18 @@ type buyNowReq struct {
 }
 
 // checkoutReq selects what to buy: cart lines, or one variant "Buy Now"
-// (never stored in the cart). Prices, stock and totals always come from the
-// server; expected_total only guards against a price change since the
-// preview.
+// (never stored in the cart), the address and the shipping option (a quote
+// id from the preview or POST /shipping/rates). Prices, stock, weights,
+// shipping cost and totals always come from the server: there is no
+// shipping_cost field (an unknown field is refused). expected_total only
+// guards against a change since the preview.
 type checkoutReq struct {
-	CartItemIDs    []int64    `json:"cart_item_ids"`
-	BuyNow         *buyNowReq `json:"buy_now"`
-	AddressID      int64      `json:"address_id"`
-	IdempotencyKey string     `json:"idempotency_key"`
-	ExpectedTotal  int64      `json:"expected_total"`
+	CartItemIDs     []int64    `json:"cart_item_ids"`
+	BuyNow          *buyNowReq `json:"buy_now"`
+	AddressID       int64      `json:"address_id"`
+	ShippingQuoteID string     `json:"shipping_quote_id"`
+	IdempotencyKey  string     `json:"idempotency_key"`
+	ExpectedTotal   int64      `json:"expected_total"`
 }
 
 func (q checkoutReq) source() (checkout.Source, error) {
@@ -152,7 +155,7 @@ func (h *Handler) checkoutPreview(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	d, err := h.Checkout.Prepare(r.Context(), userID(r), src, req.AddressID)
+	d, err := h.Checkout.Prepare(r.Context(), userID(r), src, req.AddressID, req.ShippingQuoteID)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -189,6 +192,9 @@ func (h *Handler) createOrder(w http.ResponseWriter, r *http.Request) {
 	if req.AddressID <= 0 {
 		fields["address_id"] = "Pilih alamat pengiriman terlebih dahulu."
 	}
+	if req.ShippingQuoteID == "" || len(req.ShippingQuoteID) > 64 {
+		fields["shipping_quote_id"] = "Pilih pengiriman (quote_id dari preview checkout atau /shipping/rates)."
+	}
 	if req.ExpectedTotal < 0 {
 		fields["expected_total"] = "Tidak boleh negatif."
 	}
@@ -198,7 +204,7 @@ func (h *Handler) createOrder(w http.ResponseWriter, r *http.Request) {
 	}
 	uid := userID(r)
 	placed, err := h.Checkout.PlaceOrder(r.Context(), uid, checkout.PlaceRequest{Source: src, AddressID: req.AddressID,
-		ExpectedTotal: req.ExpectedTotal, IdempotencyKey: req.IdempotencyKey})
+		ShippingQuoteID: req.ShippingQuoteID, ExpectedTotal: req.ExpectedTotal, IdempotencyKey: req.IdempotencyKey})
 	if err != nil {
 		h.fail(w, r, err)
 		return

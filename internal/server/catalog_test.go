@@ -39,7 +39,7 @@ func seedCatalog(t *testing.T, db *pgxpool.Pool) {
 			t.Fatalf("create %s: %v", in.Name, err)
 		}
 	}
-	create(product.Input{
+	create(product.Input{WeightGrams: 100,
 		CategoryID: atasan.ID, Name: "Kaos Ashanum Basic", Brand: "Ashanum", Active: true, FlashSale: true,
 		Description: "Kaos katun combed.",
 		Images:      []product.ImageInput{{URL: testImage}},
@@ -53,16 +53,16 @@ func seedCatalog(t *testing.T, db *pgxpool.Pool) {
 		},
 	})
 	for i := 1; i <= 22; i++ {
-		create(product.Input{
+		create(product.Input{WeightGrams: 100,
 			CategoryID: atasan.ID, Name: fmt.Sprintf("Tunik Polos %02d", i), Brand: "Nura", Active: true,
 			Variants: []product.VariantInput{{SKU: fmt.Sprintf("TNK-%02d", i), Price: int64(50000 + i*1000), Stock: 3}},
 		})
 	}
-	create(product.Input{
+	create(product.Input{WeightGrams: 100,
 		CategoryID: atasan.ID, Name: "Produk Nonaktif", Active: false,
 		Variants: []product.VariantInput{{SKU: "OFF-1", Price: 10000, Stock: 1}},
 	})
-	create(product.Input{
+	create(product.Input{WeightGrams: 100,
 		CategoryID: arsip.ID, Name: "Produk Kategori Arsip", Active: true,
 		Variants: []product.VariantInput{{SKU: "ARS-1", Price: 10000, Stock: 1}},
 	})

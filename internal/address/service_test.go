@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"ecommerce/internal/shipping/shippingtest"
 	"ecommerce/internal/testutil"
 	"ecommerce/internal/validate"
 )
@@ -29,7 +30,7 @@ func validInput(label string) Input {
 
 func setup(t *testing.T) (*Service, *pgxpool.Pool, context.Context) {
 	db := testutil.DB(t)
-	return NewService(NewRepository(db)), db, context.Background()
+	return NewService(NewRepository(db), shippingtest.New(t, db).Service), db, context.Background()
 }
 
 func primaryIDs(t *testing.T, svc *Service, userID int64) []int64 {

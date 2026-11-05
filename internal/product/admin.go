@@ -39,6 +39,9 @@ type AdminCard struct {
 	VariantCount   int
 	Stock          int // units across active variants
 	ImageURL       string
+	// WeightMissing: no product weight and an active variant without its
+	// own: the product cannot be checked out until the admin sets it.
+	WeightMissing bool
 }
 
 const (
@@ -70,6 +73,7 @@ type AdminVariant struct {
 	OriginalPrice int64   `json:"original_price"`
 	Stock         int     `json:"stock"`
 	Active        bool    `json:"active"`
+	WeightGrams   int     `json:"weight_grams"` // 0 = the product's weight
 	ValueIDs      []int64 `json:"value_ids"`
 	Label         string  `json:"-"`
 }
@@ -94,6 +98,24 @@ type AdminProduct struct {
 	Images        []Image
 	Attributes    []Attribute
 	Variants      []AdminVariant
+	WeightGrams   int
+	LengthCM      int
+	WidthCM       int
+	HeightCM      int
+}
+
+// WeightMissing reports an active variant that has no weight (neither its
+// own nor the product's): checkout refuses it.
+func (p AdminProduct) WeightMissing() bool {
+	if p.WeightGrams > 0 {
+		return false
+	}
+	for _, v := range p.Variants {
+		if v.Active && v.WeightGrams == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // ImageText is the image URLs one per line, for the edit form.
@@ -116,6 +138,11 @@ type Info struct {
 	Active      bool
 	Featured    bool
 	FlashSale   bool
+	// Shipping: weight per unit (grams) and optional dimensions (cm).
+	WeightGrams int
+	LengthCM    int
+	WidthCM     int
+	HeightCM    int
 }
 
 // NewProduct is the admin's new product form: the product fields, image
@@ -138,6 +165,7 @@ type VariantUpdate struct {
 	Price         int64
 	OriginalPrice int64
 	Active        bool
+	WeightGrams   int // 0 = the product's weight
 }
 
 var ErrAttributeExists = errors.New("product: attribute already exists")
@@ -169,7 +197,8 @@ func (s *Service) AdminList(ctx context.Context, f AdminFilter) (AdminPage, erro
 	for _, r := range rows {
 		page.Products = append(page.Products, AdminCard{ID: r.ID, Name: r.Name, Slug: r.Slug, Brand: r.Brand, Active: r.Active,
 			Price: deref(r.Price), PriceMax: deref(r.PriceMax), InStock: r.InStock, CategoryName: r.CategoryName,
-			CategoryActive: r.CategoryActive, VariantCount: int(r.VariantCount), Stock: int(r.Stock), ImageURL: r.ImageUrl})
+			CategoryActive: r.CategoryActive, VariantCount: int(r.VariantCount), Stock: int(r.Stock), ImageURL: r.ImageUrl,
+			WeightMissing: r.WeightMissing})
 	}
 	return page, nil
 }
@@ -189,7 +218,9 @@ func adminProduct(ctx context.Context, q *dbgen.Queries, id int64) (AdminProduct
 	}
 	p := AdminProduct{ID: row.ID, CategoryID: row.CategoryID, Name: row.Name, Slug: row.Slug, Description: row.Description,
 		Brand: row.Brand, Active: row.Active, Featured: row.Featured, FlashSale: row.FlashSale, SoldCount: int(row.SoldCount),
-		RatingAverage: row.RatingAverage, RatingCount: int(row.RatingCount), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+		RatingAverage: row.RatingAverage, RatingCount: int(row.RatingCount), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		WeightGrams: int(row.WeightGrams), LengthCM: int(deref32(row.LengthCm)), WidthCM: int(deref32(row.WidthCm)),
+		HeightCM: int(deref32(row.HeightCm))}
 	if err := errors.Join(
 		decode("images", row.Images, &p.Images),
 		decode("attributes", row.Attributes, &p.Attributes),
@@ -229,7 +260,8 @@ func (s *Service) CreateByAdmin(ctx context.Context, adminID int64, in NewProduc
 	}
 	return s.create(ctx, adminID, Input{CategoryID: in.CategoryID, Name: in.Name, Slug: in.Slug, Description: in.Description,
 		Brand: in.Brand, Active: in.Active, Featured: in.Featured, FlashSale: in.FlashSale, Images: images,
-		Attributes: in.Attributes, Variants: variants})
+		Attributes: in.Attributes, Variants: variants, WeightGrams: in.WeightGrams, LengthCM: in.LengthCM,
+		WidthCM: in.WidthCM, HeightCM: in.HeightCM})
 }
 
 // generateVariants makes one variant per combination of attribute values,
@@ -300,7 +332,8 @@ func (s *Service) UpdateInfo(ctx context.Context, adminID, id int64, in Info, im
 	// checks, which do not apply to this form.
 	p, err := normalizeInput(Input{CategoryID: in.CategoryID, Name: in.Name, Slug: in.Slug, Description: in.Description,
 		Brand: in.Brand, Active: in.Active, Featured: in.Featured, FlashSale: in.FlashSale, Images: images,
-		Variants: []VariantInput{{SKU: "X", Price: 1}}})
+		Variants: []VariantInput{{SKU: "X", Price: 1}}, WeightGrams: in.WeightGrams, LengthCM: in.LengthCM,
+		WidthCM: in.WidthCM, HeightCM: in.HeightCM})
 	if err != nil {
 		return err
 	}
@@ -313,7 +346,9 @@ func (s *Service) UpdateInfo(ctx context.Context, adminID, id int64, in Info, im
 			return err
 		}
 		if err := q.UpdateProduct(ctx, dbgen.UpdateProductParams{ID: id, CategoryID: p.CategoryID, Name: p.Name, Slug: p.Slug,
-			Description: p.Description, Brand: p.Brand, Active: p.Active, Featured: p.Featured, FlashSale: p.FlashSale}); err != nil {
+			Description: p.Description, Brand: p.Brand, Active: p.Active, Featured: p.Featured, FlashSale: p.FlashSale,
+			WeightGrams: int32(p.WeightGrams), LengthCm: dimension(p.LengthCM), WidthCm: dimension(p.WidthCM),
+			HeightCm: dimension(p.HeightCM)}); err != nil {
 			return err
 		}
 		if err := q.DeleteProductImages(ctx, id); err != nil {
@@ -324,7 +359,8 @@ func (s *Service) UpdateInfo(ctx context.Context, adminID, id int64, in Info, im
 				return err
 			}
 		}
-		meta := map[string]any{"name": p.Name, "slug": p.Slug, "category_id": p.CategoryID, "images": len(p.Images)}
+		meta := map[string]any{"name": p.Name, "slug": p.Slug, "category_id": p.CategoryID, "images": len(p.Images),
+			"weight_grams": p.WeightGrams}
 		if cur.Active != p.Active {
 			meta["active"] = p.Active
 		}
@@ -379,6 +415,9 @@ func (s *Service) AddVariant(ctx context.Context, adminID, productID int64, in V
 		e := validate.Errors{}
 		sku := strings.ToUpper(strings.TrimSpace(in.SKU))
 		checkVariant(e, sku, in.Price, in.OriginalPrice)
+		if !variantWeightOK(in.WeightGrams) {
+			e.Add("weight_grams", "Berat varian 1–100.000 gram, atau kosong untuk mengikuti berat produk.")
+		}
 		if in.Stock < 0 || in.Stock > maxStock {
 			e.Add("stock", "Stok awal tidak valid.")
 		}
@@ -425,7 +464,7 @@ func (s *Service) AddVariant(ctx context.Context, adminID, productID int64, in V
 			}
 		}
 		if id, err = q.CreateVariantRow(ctx, dbgen.CreateVariantRowParams{ProductID: productID, Sku: sku, Price: in.Price,
-			OriginalPrice: optional(in.OriginalPrice), Stock: int32(in.Stock)}); err != nil {
+			OriginalPrice: optional(in.OriginalPrice), Stock: int32(in.Stock), WeightGrams: dimension(in.WeightGrams)}); err != nil {
 			return err
 		}
 		for i, a := range p.Attributes {
@@ -453,6 +492,9 @@ func (s *Service) UpdateVariant(ctx context.Context, adminID, productID, variant
 	e := validate.Errors{}
 	sku := strings.ToUpper(strings.TrimSpace(in.SKU))
 	checkVariant(e, sku, in.Price, in.OriginalPrice)
+	if !variantWeightOK(in.WeightGrams) {
+		e.Add("weight_grams", "Berat varian 1–100.000 gram, atau kosong untuk mengikuti berat produk.")
+	}
 	if err := e.Err(); err != nil {
 		return err
 	}
@@ -465,7 +507,7 @@ func (s *Service) UpdateVariant(ctx context.Context, adminID, productID, variant
 			return err
 		}
 		if err := q.UpdateVariant(ctx, dbgen.UpdateVariantParams{ID: variantID, ProductID: productID, Sku: sku, Price: in.Price,
-			OriginalPrice: optional(in.OriginalPrice), Active: in.Active}); err != nil {
+			OriginalPrice: optional(in.OriginalPrice), Active: in.Active, WeightGrams: dimension(in.WeightGrams)}); err != nil {
 			return err
 		}
 		meta := map[string]any{}
@@ -477,6 +519,9 @@ func (s *Service) UpdateVariant(ctx context.Context, adminID, productID, variant
 		}
 		if deref(cur.OriginalPrice) != in.OriginalPrice {
 			meta["original_price"] = map[string]int64{"from": deref(cur.OriginalPrice), "to": in.OriginalPrice}
+		}
+		if int(deref32(cur.WeightGrams)) != in.WeightGrams {
+			meta["weight_grams"] = map[string]int{"from": int(deref32(cur.WeightGrams)), "to": in.WeightGrams}
 		}
 		action := "variant.update"
 		switch {

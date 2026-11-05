@@ -15,6 +15,8 @@ import (
 	"ecommerce/internal/category"
 	"ecommerce/internal/order"
 	"ecommerce/internal/product"
+	"ecommerce/internal/shipping"
+	"ecommerce/internal/shipping/shippingtest"
 	"ecommerce/internal/testutil"
 )
 
@@ -26,14 +28,19 @@ type fixture struct {
 	carts  *cart.Service
 	orders *order.Service
 	addrs  *address.Service
+	ship   *shippingtest.Env
 	catID  int64
 }
 
+// ship is the fake shipping cost of a package up to 1 kg (JNE REG).
+const ship = 9000
+
 func newFixture(t *testing.T) *fixture {
 	db := testutil.DB(t)
-	addrs := address.NewService(address.NewRepository(db))
-	f := &fixture{t: t, ctx: context.Background(), db: db, addrs: addrs,
-		svc:    NewService(NewRepository(db), addrs),
+	sh := shippingtest.New(t, db)
+	addrs := address.NewService(address.NewRepository(db), sh.Service)
+	f := &fixture{t: t, ctx: context.Background(), db: db, addrs: addrs, ship: sh,
+		svc:    NewService(NewRepository(db), addrs, sh.Service),
 		carts:  cart.NewService(cart.NewRepository(db)),
 		orders: order.NewService(order.NewRepository(db), order.Deps{})}
 	c, err := category.NewService(category.NewRepository(db)).Create(f.ctx, category.Input{Name: "Atasan", Active: true})
@@ -48,7 +55,7 @@ func newFixture(t *testing.T) *fixture {
 func (f *fixture) product(name, sku string, price int64, stock int) int64 {
 	f.t.Helper()
 	if _, err := product.NewService(product.NewRepository(f.db)).Create(f.ctx, product.Input{
-		CategoryID: f.catID, Name: name, Active: true,
+		CategoryID: f.catID, Name: name, Active: true, WeightGrams: 100,
 		Images:   []product.ImageInput{{URL: "data:image/svg+xml;base64,PHN2Zy8+"}},
 		Variants: []product.VariantInput{{SKU: sku, Price: price, Stock: stock}},
 	}); err != nil {
@@ -61,7 +68,8 @@ func (f *fixture) user(email string) (userID, addressID int64) {
 	f.t.Helper()
 	userID = testutil.CreateUser(f.t, f.db, email)
 	a, err := f.addrs.Create(f.ctx, userID, address.Input{
-		Label: "Rumah", RecipientName: "Budi Santoso", Phone: "081234567890",
+		ShippingAreaID: f.ship.AreaID(f.t),
+		Label:          "Rumah", RecipientName: "Budi Santoso", Phone: "081234567890",
 		Province: "Jawa Barat", City: "Kota Bandung", District: "Coblong", Village: "Dago",
 		PostalCode: "40135", StreetAddress: "Jl. Ir. H. Juanda No. 100",
 	})
@@ -69,6 +77,22 @@ func (f *fixture) user(email string) (userID, addressID int64) {
 		f.t.Fatal(err)
 	}
 	return userID, a.ID
+}
+
+// place places an order with the cheapest shipping quote for the request,
+// as the checkout page does, retrying when a concurrent order of the same
+// buyer used that quote first (SHIPPING_CHANGED: the page shows new rates).
+func (f *fixture) place(userID int64, req PlaceRequest) (Placed, error) {
+	for range 10 {
+		if d, err := f.svc.Prepare(f.ctx, userID, req.Source, req.AddressID, ""); err == nil && d.Shipping.Selected != nil {
+			req.ShippingQuoteID = d.Shipping.Selected.ID
+		}
+		p, err := f.svc.PlaceOrder(f.ctx, userID, req)
+		if !errors.Is(err, shipping.ErrQuoteChanged) {
+			return p, err
+		}
+	}
+	return Placed{}, shipping.ErrQuoteChanged
 }
 
 func (f *fixture) add(userID, variantID int64, qty int) int64 {
@@ -110,19 +134,19 @@ func TestCheckoutSelectedCartItems(t *testing.T) {
 	itemA, itemB, itemC := f.add(uid, a, 2), f.add(uid, b, 1), f.add(uid, c, 3)
 
 	src := Source{CartItemIDs: []int64{itemA, itemC}}
-	d, err := f.svc.Prepare(f.ctx, uid, src, 0)
+	d, err := f.svc.Prepare(f.ctx, uid, src, 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !d.Ready() || d.Address == nil || d.Address.ID != addrID || d.Total != 260000 || len(d.Lines) != 2 {
+	if !d.Ready() || d.Address == nil || d.Address.ID != addrID || d.Total != 260000+ship || d.ShippingCost != ship || len(d.Lines) != 2 {
 		t.Fatalf("draft: ready %v total %d lines %d", d.Ready(), d.Total, len(d.Lines))
 	}
 
-	placed, err := f.svc.PlaceOrder(f.ctx, uid, PlaceRequest{Source: src, AddressID: addrID, ExpectedTotal: d.Total, IdempotencyKey: "k1"})
+	placed, err := f.place(uid, PlaceRequest{Source: src, AddressID: addrID, ExpectedTotal: d.Total, IdempotencyKey: "k1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !orderNumber.MatchString(placed.OrderNumber) || placed.Total != 260000 || placed.Existing {
+	if !orderNumber.MatchString(placed.OrderNumber) || placed.Total != 260000+ship || placed.Existing {
 		t.Errorf("placed = %+v", placed)
 	}
 
@@ -139,10 +163,10 @@ func TestCheckoutSelectedCartItems(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if o.Status != order.StatusWaitingPayment || o.Subtotal != 260000 || o.ShippingCost != 0 || o.Discount != 0 || o.Total != 260000 {
+	if o.Status != order.StatusWaitingPayment || o.Subtotal != 260000 || o.ShippingCost != ship || o.Discount != 0 || o.Total != 260000+ship {
 		t.Errorf("order totals: %+v", o)
 	}
-	if o.Address.RecipientName != "Budi Santoso" || o.Address.Phone != "+6281234567890" || o.Address.Street != "Jl. Ir. H. Juanda No. 100" || o.Address.PostalCode != "40135" {
+	if o.Address.RecipientName != "Budi Santoso" || o.Address.Phone != "+6281234567890" || o.Address.Street != "Jl. Ir. H. Juanda No. 100" || o.Address.PostalCode != "40132" {
 		t.Errorf("address snapshot: %+v", o.Address)
 	}
 	if len(o.Items) != 2 || o.Items[0].ProductName != "Kaos A" || o.Items[0].SKU != "A-1" || o.Items[0].UnitPrice != 100000 ||
@@ -151,7 +175,7 @@ func TestCheckoutSelectedCartItems(t *testing.T) {
 	}
 
 	// Idempotent retry returns the same order, nothing new is written.
-	again, err := f.svc.PlaceOrder(f.ctx, uid, PlaceRequest{Source: src, AddressID: addrID, ExpectedTotal: d.Total, IdempotencyKey: "k1"})
+	again, err := f.place(uid, PlaceRequest{Source: src, AddressID: addrID, ExpectedTotal: d.Total, IdempotencyKey: "k1"})
 	if err != nil || !again.Existing || again.OrderNumber != placed.OrderNumber {
 		t.Errorf("retry: %+v %v", again, err)
 	}
@@ -168,11 +192,11 @@ func TestBuyNowLeavesCartAlone(t *testing.T) {
 	inCart := f.add(uid, other, 2)
 
 	src := Source{VariantID: a, Quantity: 2}
-	d, err := f.svc.Prepare(f.ctx, uid, src, addrID)
-	if err != nil || !d.Ready() || d.Total != 200000 {
+	d, err := f.svc.Prepare(f.ctx, uid, src, addrID, "")
+	if err != nil || !d.Ready() || d.Total != 200000+ship {
 		t.Fatalf("draft: %+v %v", d, err)
 	}
-	placed, err := f.svc.PlaceOrder(f.ctx, uid, PlaceRequest{Source: src, AddressID: addrID, ExpectedTotal: d.Total})
+	placed, err := f.place(uid, PlaceRequest{Source: src, AddressID: addrID, ExpectedTotal: d.Total})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,21 +221,21 @@ func TestOwnershipIsEnforced(t *testing.T) {
 	aliceItem := f.add(alice, v, 1)
 
 	// Bob cannot check out Alice's cart lines.
-	if _, err := f.svc.Prepare(f.ctx, bob, Source{CartItemIDs: []int64{aliceItem}}, 0); !errors.Is(err, ErrNothingToCheckout) {
+	if _, err := f.svc.Prepare(f.ctx, bob, Source{CartItemIDs: []int64{aliceItem}}, 0, ""); !errors.Is(err, ErrNothingToCheckout) {
 		t.Errorf("prepare with another user's cart line: %v", err)
 	}
-	if _, err := f.svc.PlaceOrder(f.ctx, bob, PlaceRequest{Source: Source{CartItemIDs: []int64{aliceItem}}, AddressID: bobAddr}); !errors.Is(err, ErrNothingToCheckout) {
+	if _, err := f.place(bob, PlaceRequest{Source: Source{CartItemIDs: []int64{aliceItem}}, AddressID: bobAddr}); !errors.Is(err, ErrNothingToCheckout) {
 		t.Errorf("place with another user's cart line: %v", err)
 	}
 	// Alice cannot ship to Bob's address.
-	if _, err := f.svc.PlaceOrder(f.ctx, alice, PlaceRequest{Source: Source{CartItemIDs: []int64{aliceItem}}, AddressID: bobAddr}); !errors.Is(err, ErrAddressRequired) {
+	if _, err := f.place(alice, PlaceRequest{Source: Source{CartItemIDs: []int64{aliceItem}}, AddressID: bobAddr}); !errors.Is(err, ErrAddressRequired) {
 		t.Errorf("another user's address: %v", err)
 	}
 	if f.stock(v) != 5 || f.id("SELECT count(*) FROM orders") != 0 {
 		t.Error("refused checkouts must not change stock or create orders")
 	}
 
-	placed, err := f.svc.PlaceOrder(f.ctx, alice, PlaceRequest{Source: Source{CartItemIDs: []int64{aliceItem}}, AddressID: aliceAddr})
+	placed, err := f.place(alice, PlaceRequest{Source: Source{CartItemIDs: []int64{aliceItem}}, AddressID: aliceAddr})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +251,7 @@ func TestSnapshotsSurviveLaterChanges(t *testing.T) {
 	f := newFixture(t)
 	uid, addrID := f.user("a@example.com")
 	v := f.product("Kaos A", "A-1", 100000, 5)
-	placed, err := f.svc.PlaceOrder(f.ctx, uid, PlaceRequest{Source: Source{VariantID: v, Quantity: 1}, AddressID: addrID})
+	placed, err := f.place(uid, PlaceRequest{Source: Source{VariantID: v, Quantity: 1}, AddressID: addrID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,22 +283,22 @@ func TestPriceChangeIsDetected(t *testing.T) {
 	v := f.product("Kaos A", "A-1", 100000, 5)
 	item := f.add(uid, v, 2)
 	src := Source{CartItemIDs: []int64{item}}
-	d, _ := f.svc.Prepare(f.ctx, uid, src, addrID)
+	d, _ := f.svc.Prepare(f.ctx, uid, src, addrID, "")
 
 	f.exec("UPDATE product_variants SET price = 120000")
-	if _, err := f.svc.PlaceOrder(f.ctx, uid, PlaceRequest{Source: src, AddressID: addrID, ExpectedTotal: d.Total}); !errors.Is(err, ErrPriceChanged) {
+	if _, err := f.place(uid, PlaceRequest{Source: src, AddressID: addrID, ExpectedTotal: d.Total}); !errors.Is(err, ErrPriceChanged) {
 		t.Fatalf("stale total: %v", err)
 	}
 	if f.id("SELECT count(*) FROM orders") != 0 || f.stock(v) != 5 {
 		t.Error("a price change must roll back")
 	}
 
-	d, _ = f.svc.Prepare(f.ctx, uid, src, addrID)
-	if d.Total != 240000 {
+	d, _ = f.svc.Prepare(f.ctx, uid, src, addrID, "")
+	if d.Total != 240000+ship {
 		t.Errorf("refreshed total = %d", d.Total)
 	}
-	placed, err := f.svc.PlaceOrder(f.ctx, uid, PlaceRequest{Source: src, AddressID: addrID, ExpectedTotal: d.Total})
-	if err != nil || placed.Total != 240000 {
+	placed, err := f.place(uid, PlaceRequest{Source: src, AddressID: addrID, ExpectedTotal: d.Total})
+	if err != nil || placed.Total != 240000+ship {
 		t.Errorf("with the new total: %+v %v", placed, err)
 	}
 }
@@ -289,7 +313,7 @@ func TestUnavailableAndShortStockRollBack(t *testing.T) {
 
 	check := func(label string, want error) {
 		t.Helper()
-		if _, err := f.svc.PlaceOrder(f.ctx, uid, PlaceRequest{Source: src, AddressID: addrID}); !errors.Is(err, want) {
+		if _, err := f.place(uid, PlaceRequest{Source: src, AddressID: addrID}); !errors.Is(err, want) {
 			t.Errorf("%s: err = %v, want %v", label, err, want)
 		}
 		if f.id("SELECT count(*) FROM orders") != 0 || f.stock(ok) != 5 {
@@ -302,7 +326,7 @@ func TestUnavailableAndShortStockRollBack(t *testing.T) {
 
 	f.exec("UPDATE product_variants SET stock = 3 WHERE sku = 'B-1'")
 	check("insufficient stock", ErrStockChanged)
-	d, _ := f.svc.Prepare(f.ctx, uid, src, addrID)
+	d, _ := f.svc.Prepare(f.ctx, uid, src, addrID, "")
 	if d.Ready() || !d.Blocked() || d.Lines[1].Problem != ProblemInsufficientStock {
 		t.Errorf("draft must flag the short line: %+v", d.Lines)
 	}
@@ -340,7 +364,7 @@ func TestLastItemOnlySellsOnce(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := f.svc.PlaceOrder(f.ctx, b.uid, PlaceRequest{Source: Source{VariantID: last, Quantity: 1}, AddressID: b.addr})
+			_, err := f.place(b.uid, PlaceRequest{Source: Source{VariantID: last, Quantity: 1}, AddressID: b.addr})
 			results <- err
 		}()
 	}
@@ -381,7 +405,7 @@ func TestOrderNumbersAreUnique(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			p, err := f.svc.PlaceOrder(f.ctx, uid, PlaceRequest{Source: Source{VariantID: v, Quantity: 1}, AddressID: addr})
+			p, err := f.place(uid, PlaceRequest{Source: Source{VariantID: v, Quantity: 1}, AddressID: addr})
 			if err != nil {
 				t.Error(err)
 				return
@@ -422,18 +446,18 @@ func TestOrderNumbersAreUnique(t *testing.T) {
 func TestPrepareRequiresSomethingAndAnAddress(t *testing.T) {
 	f := newFixture(t)
 	v := f.product("Kaos A", "A-1", 100000, 5)
-	if _, err := f.svc.Prepare(f.ctx, 1, Source{}, 0); !errors.Is(err, ErrNothingToCheckout) {
+	if _, err := f.svc.Prepare(f.ctx, 1, Source{}, 0, ""); !errors.Is(err, ErrNothingToCheckout) {
 		t.Errorf("empty source: %v", err)
 	}
 	noAddr := testutil.CreateUser(t, f.db, "no-address@example.com")
-	d, err := f.svc.Prepare(f.ctx, noAddr, Source{VariantID: v, Quantity: 1}, 0)
+	d, err := f.svc.Prepare(f.ctx, noAddr, Source{VariantID: v, Quantity: 1}, 0, "")
 	if err != nil || d.Address != nil || d.Ready() {
 		t.Errorf("without address: ready %v, %v", d.Ready(), err)
 	}
-	if _, err := f.svc.PlaceOrder(f.ctx, noAddr, PlaceRequest{Source: Source{VariantID: v, Quantity: 1}}); !errors.Is(err, ErrAddressRequired) {
+	if _, err := f.place(noAddr, PlaceRequest{Source: Source{VariantID: v, Quantity: 1}}); !errors.Is(err, ErrAddressRequired) {
 		t.Errorf("place without address: %v", err)
 	}
-	if _, err := f.svc.PlaceOrder(f.ctx, noAddr, PlaceRequest{Source: Source{VariantID: v, Quantity: 100}, AddressID: 1}); !errors.Is(err, ErrStockChanged) {
+	if _, err := f.place(noAddr, PlaceRequest{Source: Source{VariantID: v, Quantity: 100}, AddressID: 1}); !errors.Is(err, ErrStockChanged) {
 		t.Errorf("quantity above the limit must be refused: %v", err)
 	}
 }

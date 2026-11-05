@@ -76,13 +76,17 @@ type addressDTO struct {
 	IsPrimary     bool     `json:"is_primary"`
 	CreatedAt     string   `json:"created_at"`
 	UpdatedAt     string   `json:"updated_at"`
+	// Delivery area for shipping rates (null: not chosen yet).
+	ShippingAreaID    *string `json:"shipping_area_id"`
+	ShippingAreaLabel *string `json:"shipping_area_label"`
 }
 
 func addressOut(a address.Address) addressDTO {
 	return addressDTO{ID: a.ID, Label: a.Label, RecipientName: a.RecipientName, Phone: a.Phone, Province: a.Province,
 		City: a.City, District: a.District, Village: a.Village, PostalCode: a.PostalCode, StreetAddress: a.StreetAddress,
 		Latitude: a.Latitude, Longitude: a.Longitude, MapsURL: nonEmpty(a.MapsURL), IsPrimary: a.IsPrimary,
-		CreatedAt: ts(a.CreatedAt), UpdatedAt: ts(a.UpdatedAt)}
+		CreatedAt: ts(a.CreatedAt), UpdatedAt: ts(a.UpdatedAt), ShippingAreaID: nonEmpty(a.ShippingAreaID),
+		ShippingAreaLabel: nonEmpty(a.ShippingAreaLabel)}
 }
 
 // ---------------------------------------------------------------- catalog
@@ -310,17 +314,6 @@ func cartOut(c cart.Cart) cartDTO {
 
 // ---------------------------------------------------------------- checkout
 
-// shippingDTO says honestly that shipping is not calculated yet: cost 0 is
-// a placeholder, not free shipping.
-type shippingDTO struct {
-	Cost    int64  `json:"cost"`
-	Status  string `json:"status"`
-	Message string `json:"message"`
-}
-
-var shippingPending = shippingDTO{Cost: 0, Status: "PENDING_INTEGRATION",
-	Message: "Ongkos kirim belum dihitung (integrasi kurir belum tersedia). Ini bukan gratis ongkir."}
-
 type previewLineDTO struct {
 	CartItemID     *int64  `json:"cart_item_id"`
 	ProductID      int64   `json:"product_id"`
@@ -345,17 +338,18 @@ type warningDTO struct {
 }
 
 type previewDTO struct {
-	Items    []previewLineDTO `json:"items"`
-	Address  *addressDTO      `json:"address"`
-	Subtotal int64            `json:"subtotal"`
-	Shipping shippingDTO      `json:"shipping"`
-	Discount int64            `json:"discount"`
-	Total    int64            `json:"total"`
-	Ready    bool             `json:"ready"`
-	Warnings []warningDTO     `json:"warnings"`
-	Quantity int              `json:"quantity"`
-	Currency string           `json:"currency"`
-	IsBuyNow bool             `json:"is_buy_now"`
+	Items        []previewLineDTO    `json:"items"`
+	Address      *addressDTO         `json:"address"`
+	Subtotal     int64               `json:"subtotal"`
+	ShippingCost int64               `json:"shipping_cost"`
+	Shipping     checkoutShippingDTO `json:"shipping"`
+	Discount     int64               `json:"discount"`
+	Total        int64               `json:"total"`
+	Ready        bool                `json:"ready"`
+	Warnings     []warningDTO        `json:"warnings"`
+	Quantity     int                 `json:"quantity"`
+	Currency     string              `json:"currency"`
+	IsBuyNow     bool                `json:"is_buy_now"`
 }
 
 var problemText = map[checkout.Problem]string{
@@ -363,10 +357,12 @@ var problemText = map[checkout.Problem]string{
 	checkout.ProblemOutOfStock:        "Stok habis.",
 	checkout.ProblemInsufficientStock: "Stok tidak mencukupi jumlah yang dipilih.",
 	checkout.ProblemInvalidQuantity:   "Jumlah tidak valid.",
+	checkout.ProblemNoWeight:          "Produk belum bisa dikirim (berat belum diatur penjual).",
 }
 
 func previewOut(d checkout.Draft) previewDTO {
-	p := previewDTO{Items: make([]previewLineDTO, 0, len(d.Lines)), Subtotal: d.Subtotal, Shipping: shippingPending,
+	p := previewDTO{Items: make([]previewLineDTO, 0, len(d.Lines)), Subtotal: d.Subtotal, ShippingCost: d.ShippingCost,
+		Shipping: checkoutShippingOut(d),
 		Discount: d.Discount, Total: d.Total, Ready: d.Ready(), Warnings: []warningDTO{}, Quantity: d.Quantity(),
 		Currency: "IDR", IsBuyNow: d.Source.BuyNow()}
 	for _, l := range d.Lines {
@@ -388,7 +384,13 @@ func previewOut(d checkout.Draft) previewDTO {
 	} else {
 		p.Warnings = append(p.Warnings, warningDTO{Code: "ADDRESS_REQUIRED", Message: "Pilih alamat pengiriman terlebih dahulu."})
 	}
-	p.Warnings = append(p.Warnings, warningDTO{Code: "SHIPPING_NOT_CALCULATED", Message: shippingPending.Message})
+	switch {
+	case d.Shipping.State != checkout.ShippingReady && d.Shipping.State != checkout.ShippingNeedAddress:
+		p.Warnings = append(p.Warnings, warningDTO{Code: "SHIPPING_" + string(d.Shipping.State), Message: d.Shipping.Message()})
+	case d.Shipping.Changed:
+		p.Warnings = append(p.Warnings, warningDTO{Code: "SHIPPING_CHANGED",
+			Message: "Pilihan pengiriman sebelumnya tidak berlaku lagi; ongkos kirim termurah dipilih. Periksa sebelum membuat pesanan."})
+	}
 	return p
 }
 
@@ -456,15 +458,6 @@ type orderAddressDTO struct {
 	Longitude     *float64 `json:"longitude"`
 }
 
-type shipmentDTO struct {
-	Method         string  `json:"method"`
-	Courier        string  `json:"courier"`
-	Service        *string `json:"service"`
-	TrackingNumber *string `json:"tracking_number"`
-	ShippedAt      string  `json:"shipped_at"`
-	LiveTracking   bool    `json:"live_tracking"`
-}
-
 type paymentDTO struct {
 	Status      string  `json:"status"`
 	StatusLabel string  `json:"status_label"`
@@ -493,7 +486,8 @@ type orderDTO struct {
 	Status         string           `json:"status"`
 	StatusLabel    string           `json:"status_label"`
 	Subtotal       int64            `json:"subtotal"`
-	Shipping       shippingDTO      `json:"shipping"`
+	ShippingCost   int64            `json:"shipping_cost"`
+	Shipping       orderShippingDTO `json:"shipping"`
 	Discount       int64            `json:"discount"`
 	Total          int64            `json:"total"`
 	Items          []orderItemDTO   `json:"items"`
@@ -516,7 +510,7 @@ type orderDTO struct {
 
 func orderOut(o order.Order) orderDTO {
 	d := orderDTO{OrderNumber: o.Number, Status: string(o.Status), StatusLabel: o.Status.Label(), Subtotal: o.Subtotal,
-		Shipping: shippingDTO{Cost: o.ShippingCost, Status: shippingPending.Status, Message: shippingPending.Message},
+		ShippingCost: o.ShippingCost, Shipping: orderShippingOut(o),
 		Discount: o.Discount, Total: o.Total, Items: make([]orderItemDTO, 0, len(o.Items)),
 		Address: orderAddressDTO{Label: o.Address.Label, RecipientName: o.Address.RecipientName, Phone: o.Address.Phone,
 			Province: o.Address.Province, City: o.Address.City, District: o.Address.District, Village: o.Address.Village,
@@ -535,10 +529,7 @@ func orderOut(o order.Order) orderDTO {
 			Quantity: it.Quantity, Subtotal: it.Subtotal, ReviewID: nonZero(it.ReviewID), ReturnedQuantity: it.Returned,
 			ReturnableQuantity: it.Returnable()})
 	}
-	if s := o.Shipment; s != nil {
-		d.Shipment = &shipmentDTO{Method: "MANUAL", Courier: s.Courier, Service: nonEmpty(s.Service),
-			TrackingNumber: nonEmpty(s.Tracking), ShippedAt: ts(s.ShippedAt), LiveTracking: false}
-	}
+	d.Shipment = shipmentOut(o.Shipment)
 	if p := o.LastPayment(); p != nil {
 		d.LatestPayment = paymentOut(*p)
 	}

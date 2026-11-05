@@ -25,6 +25,7 @@ import (
 	"ecommerce/internal/product"
 	"ecommerce/internal/returns"
 	"ecommerce/internal/review"
+	"ecommerce/internal/shipping"
 	"ecommerce/internal/user"
 	"ecommerce/internal/validate"
 )
@@ -148,6 +149,23 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 		failWith(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", checkout.Message(err), map[string]string{"address_id": checkout.Message(err)})
 	case errors.Is(err, checkout.ErrNothingToCheckout):
 		failWith(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", checkout.Message(err), map[string]string{"cart_item_ids": checkout.Message(err)})
+	case errors.Is(err, checkout.ErrNotShippable):
+		failWith(w, http.StatusConflict, "ITEMS_NOT_SHIPPABLE", checkout.Message(err), nil)
+	case errors.Is(err, checkout.ErrShippingRequired):
+		failWith(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", checkout.Message(err), map[string]string{"shipping_quote_id": checkout.Message(err)})
+	case errors.Is(err, checkout.ErrAreaRequired):
+		failWith(w, http.StatusUnprocessableEntity, "SHIPPING_AREA_REQUIRED", checkout.Message(err), map[string]string{"address_id": checkout.Message(err)})
+
+	case errors.Is(err, shipping.ErrQuoteChanged):
+		failWith(w, http.StatusConflict, "SHIPPING_CHANGED", shipping.Message(err), map[string]string{"shipping_quote_id": shipping.Message(err)})
+	case errors.Is(err, shipping.ErrInvalidQuery):
+		failWith(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", shipping.Message(err), map[string]string{"q": shipping.Message(err)})
+	case errors.Is(err, shipping.ErrNoCourier):
+		failWith(w, http.StatusUnprocessableEntity, "NO_COURIER", shipping.Message(err), nil)
+	case errors.Is(err, shipping.ErrPackageInvalid):
+		failWith(w, http.StatusConflict, "ITEMS_NOT_SHIPPABLE", shipping.Message(err), nil)
+	case errors.Is(err, shipping.ErrNotConfigured), errors.Is(err, shipping.ErrUnavailable), errors.Is(err, shipping.ErrRejected):
+		failWith(w, http.StatusServiceUnavailable, "SHIPPING_PROVIDER_UNAVAILABLE", shipping.Message(shipping.ErrUnavailable), nil)
 
 	case errors.Is(err, payment.ErrNotConfigured):
 		failWith(w, http.StatusServiceUnavailable, "PAYMENT_UNAVAILABLE", payment.Message(err), nil)

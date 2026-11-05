@@ -33,7 +33,7 @@
     {{if eq $o.Status "WAITING_PAYMENT"}}<div><dt>Bayar sebelum</dt><dd>{{datetime $o.PaymentDueAt}}</dd></div>{{end}}
     <div class="co-summary__total"><dt>Total</dt><dd>{{rupiah $o.Total}}</dd></div>
   </dl>
-  {{if and (eq $o.Status "WAITING_PAYMENT") $o.Sandbox}}<div class="alert alert--warning">Mode uji Midtrans Sandbox: tidak ada uang sungguhan. Total belum termasuk ongkos kirim.</div>{{end}}
+  {{if and (eq $o.Status "WAITING_PAYMENT") $o.Sandbox}}<div class="alert alert--warning">Mode uji Midtrans Sandbox: tidak ada uang sungguhan.</div>{{end}}
 
   {{if $o.CanPay}}
   <form method="post" action="/account/orders/{{$o.Number}}/pay">

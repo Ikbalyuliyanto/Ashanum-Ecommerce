@@ -30,6 +30,7 @@ import (
 	"ecommerce/internal/report"
 	"ecommerce/internal/returns"
 	"ecommerce/internal/review"
+	"ecommerce/internal/shipping"
 	"ecommerce/internal/validate"
 	"ecommerce/internal/view"
 )
@@ -45,6 +46,8 @@ type Deps struct {
 	Reviews    *review.Service
 	Reports    *report.Service
 	Audit      *audit.Service
+	// Shipping books and tracks provider shipments (nil: not configured).
+	Shipping *shipping.Service
 }
 
 type Handler struct{ Deps }
@@ -60,6 +63,9 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get("/orders/{number}", h.order)
 	r.Post("/orders/{number}/confirm", h.orderConfirm)
 	r.Post("/orders/{number}/ship", h.orderShip)
+	r.Post("/orders/{number}/shipment/book", h.orderBook)
+	r.Post("/orders/{number}/shipment/sync", h.orderShipmentSync)
+	r.Post("/orders/{number}/shipment/cancel", h.orderShipmentCancel)
 	r.Post("/orders/{number}/complete", h.orderComplete)
 	r.Post("/orders/{number}/cancel", h.orderCancel)
 

@@ -5,6 +5,7 @@ import (
 
 	"ecommerce/internal/database"
 	"ecommerce/internal/database/dbgen"
+	"ecommerce/internal/shipping"
 )
 
 type Repository struct {
@@ -51,7 +52,8 @@ func (r *Repository) List(ctx context.Context, userID int64, statuses []Status, 
 }
 
 // Get returns one order of the user with its items, their reviews and
-// returned quantities, and the shipment (two queries).
+// returned quantities, the shipping snapshot and the active shipment (two
+// queries, three with tracking events).
 func (r *Repository) Get(ctx context.Context, userID int64, number string) (Order, error) {
 	row, err := r.q.GetOrder(ctx, dbgen.GetOrderParams{OrderNumber: number, UserID: userID})
 	if database.IsNoRows(err) {
@@ -92,15 +94,39 @@ func (r *Repository) Get(ctx context.Context, userID int64, number string) (Orde
 	if row.CancelReason != nil {
 		o.CancelReason = *row.CancelReason
 	}
-	if row.CourierName != nil && row.ShippedAt != nil {
-		o.Shipment = &Shipment{Courier: *row.CourierName, Service: deref(row.ServiceName), Tracking: deref(row.TrackingNumber),
-			ShippedAt: *row.ShippedAt}
-	}
+	o.Shipping = ShippingColumns{Provider: row.ShippingProvider, CourierCode: row.ShippingCourierCode,
+		CourierName: row.ShippingCourierName, ServiceCode: row.ShippingServiceCode, ServiceName: row.ShippingServiceName,
+		EstimatedDays: row.ShippingEstimatedDays, WeightGrams: row.ShippingWeightGrams, AreaID: row.ShippingAreaID,
+		AreaLabel: row.ShippingAreaLabel}.Choice()
+	o.Shipment = ShipmentColumns{ID: row.ShipmentID, Method: row.ShipmentMethod, Provider: row.ShipmentProvider,
+		Courier: row.CourierName, CourierCode: row.ShipmentCourierCode, Service: row.ServiceName,
+		ServiceCode: row.ShipmentServiceCode, Tracking: row.TrackingNumber, TrackingURL: row.ShipmentTrackingUrl,
+		Status: row.ShipmentStatus, EstimatedDays: row.ShipmentEstimatedDays, FailureReason: row.ShipmentFailureReason,
+		ShippedAt: row.ShippedAt, BookedAt: row.ShipmentBookedAt, DeliveredAt: row.ShipmentDeliveredAt,
+		CancelledAt: row.ShipmentCancelledAt, SyncedAt: row.ShipmentSyncedAt, CreatedAt: row.ShipmentCreatedAt}.Shipment()
 	var err2 error
 	if o.Items, err2 = r.Items(ctx, row.ID); err2 != nil {
 		return Order{}, err2
 	}
+	if err2 = r.Timeline(ctx, o.Shipment); err2 != nil {
+		return Order{}, err2
+	}
 	return o, nil
+}
+
+// Timeline loads the tracking events of a provider shipment (one query;
+// none for a manual shipment or no shipment). Events come from the
+// database only: the provider is never called to show a page.
+func (r *Repository) Timeline(ctx context.Context, s *Shipment) error {
+	if s == nil || s.Manual() {
+		return nil
+	}
+	rows, err := r.q.ShipmentTimeline(ctx, s.ID)
+	if err != nil {
+		return err
+	}
+	s.Events = shipping.Timeline(rows)
+	return nil
 }
 
 // Items lists an order's lines with the buyer's review and the quantity

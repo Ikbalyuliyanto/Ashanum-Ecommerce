@@ -79,6 +79,10 @@ func (r *Repository) Create(ctx context.Context, userID int64, f fields, primary
 		Longitude:     f.Longitude,
 		MapsUrl:       nullable(f.MapsURL),
 		IsPrimary:     primary,
+
+		ShippingAreaProvider: f.areaProvider(),
+		ShippingAreaID:       f.areaID(),
+		ShippingAreaLabel:    f.areaLabel(),
 	})
 	if err != nil {
 		return Address{}, err
@@ -103,6 +107,10 @@ func (r *Repository) Update(ctx context.Context, userID, id int64, f fields, pri
 		Longitude:     f.Longitude,
 		MapsUrl:       nullable(f.MapsURL),
 		IsPrimary:     primary,
+
+		ShippingAreaProvider: f.areaProvider(),
+		ShippingAreaID:       f.areaID(),
+		ShippingAreaLabel:    f.areaLabel(),
 	})
 	if database.IsNoRows(err) {
 		return Address{}, ErrNotFound
@@ -160,7 +168,39 @@ func fromRow(row dbgen.UserAddress) Address {
 	if row.MapsUrl != nil {
 		a.MapsURL = *row.MapsUrl
 	}
+	if row.ShippingAreaID != nil {
+		a.ShippingAreaProvider, a.ShippingAreaID = deref(row.ShippingAreaProvider), *row.ShippingAreaID
+		a.ShippingAreaLabel = deref(row.ShippingAreaLabel)
+	}
 	return a
+}
+
+func (f fields) areaProvider() *string {
+	if f.Area == nil {
+		return nil
+	}
+	return &f.Area.Provider
+}
+
+func (f fields) areaID() *string {
+	if f.Area == nil {
+		return nil
+	}
+	return &f.Area.ID
+}
+
+func (f fields) areaLabel() *string {
+	if f.Area == nil {
+		return nil
+	}
+	return &f.Area.Label
+}
+
+func deref(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 func nullable(s string) *string {

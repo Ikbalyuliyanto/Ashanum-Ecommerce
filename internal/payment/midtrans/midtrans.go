@@ -4,9 +4,10 @@
 // cancel and expire endpoints. It uses net/http only; the official SDK
 // would add a dependency for a few JSON calls.
 //
-// Only the sandbox is supported: order totals do not include shipping cost
-// yet, so real-money payments must stay disabled until the shipping
-// integration and a production payment review are done.
+// Only the sandbox is supported: real-money payments stay disabled until
+// the real sandbox and the shipping provider have been tested end to end
+// and a production payment review is done. The amount is always
+// orders.total (items + shipping), with shipping as its own line item.
 package midtrans
 
 import (

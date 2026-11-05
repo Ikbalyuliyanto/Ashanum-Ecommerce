@@ -58,6 +58,16 @@ func (p page) AddAddressURL() string {
 	return "/account/addresses/new?" + url.Values{"next": {p.CurrentURL()}}.Encode()
 }
 
+// EditAddressURL edits the chosen address (to pick its delivery area) and
+// comes back here.
+func (p page) EditAddressURL() string {
+	if p.Draft.Address == nil {
+		return p.AddAddressURL()
+	}
+	return "/account/addresses/" + strconv.FormatInt(p.Draft.Address.ID, 10) + "/edit?" +
+		url.Values{"next": {p.CurrentURL()}}.Encode()
+}
+
 // BackURL returns to the product (Buy Now) or the cart with this selection.
 func (p page) BackURL() string {
 	if p.Draft.Source.BuyNow() {
@@ -110,7 +120,7 @@ func (h *Handler) Show(w http.ResponseWriter, r *http.Request) {
 	}
 
 	addressID, _ := strconv.ParseInt(q.Get("address"), 10, 64)
-	d, err := h.svc.Prepare(r.Context(), p.UserID, src, addressID)
+	d, err := h.svc.Prepare(r.Context(), p.UserID, src, addressID, q.Get("ship"))
 	if errors.Is(err, ErrNothingToCheckout) {
 		h.view.SetFlash(w, "error", Message(err))
 		http.Redirect(w, r, "/cart", http.StatusSeeOther)
@@ -124,8 +134,8 @@ func (h *Handler) Show(w http.ResponseWriter, r *http.Request) {
 }
 
 // Place handles POST /checkout/order. Success redirects to the success
-// page; a stock, price or availability change re-renders the checkout with
-// fresh data and the reason.
+// page; a stock, price, shipping or availability change re-renders the
+// checkout with fresh data (and fresh shipping quotes) and the reason.
 func (h *Handler) Place(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
 	if err := view.ParseForm(w, r); err != nil {
@@ -136,12 +146,14 @@ func (h *Handler) Place(w http.ResponseWriter, r *http.Request) {
 	src := sourceFrom(f)
 	addressID, _ := strconv.ParseInt(f.Get("address_id"), 10, 64)
 	expected, _ := strconv.ParseInt(f.Get("expected_total"), 10, 64)
+	quoteID := f.Get("shipping_quote_id")
 
 	placed, err := h.svc.PlaceOrder(r.Context(), p.UserID, PlaceRequest{
-		Source:         src,
-		AddressID:      addressID,
-		ExpectedTotal:  expected,
-		IdempotencyKey: f.Get("key"),
+		Source:          src,
+		AddressID:       addressID,
+		ShippingQuoteID: quoteID,
+		ExpectedTotal:   expected,
+		IdempotencyKey:  f.Get("key"),
 	})
 	if err == nil {
 		http.Redirect(w, r, "/checkout/success/"+url.PathEscape(placed.OrderNumber), http.StatusSeeOther)
@@ -152,7 +164,7 @@ func (h *Handler) Place(w http.ResponseWriter, r *http.Request) {
 		h.view.ServerError(w, r, err)
 		return
 	}
-	d, prepErr := h.svc.Prepare(r.Context(), p.UserID, src, addressID)
+	d, prepErr := h.svc.Prepare(r.Context(), p.UserID, src, addressID, quoteID)
 	if prepErr != nil {
 		h.view.SetFlash(w, "error", msg)
 		http.Redirect(w, r, "/cart", http.StatusSeeOther)

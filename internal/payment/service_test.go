@@ -18,6 +18,7 @@ import (
 	"ecommerce/internal/checkout"
 	"ecommerce/internal/payment"
 	"ecommerce/internal/product"
+	"ecommerce/internal/shipping/shippingtest"
 	"ecommerce/internal/testutil"
 )
 
@@ -125,12 +126,16 @@ type fixture struct {
 	catID    int64
 }
 
+// ship is the shipping cost of every test order (JNE REG, up to 1 kg in
+// the fake provider): orders.total = items + ship is what is charged.
+const ship = 9000
+
 func newFixture(t *testing.T) *fixture {
 	db := testutil.DB(t)
 	f := &fixture{t: t, ctx: context.Background(), db: db, prov: newFakeProvider(),
-		carts: cart.NewService(cart.NewRepository(db)), addrs: address.NewService(address.NewRepository(db))}
+		carts: cart.NewService(cart.NewRepository(db)), addrs: address.NewService(address.NewRepository(db), shippingtest.For(t, db).Service)}
 	f.svc = f.newService(f.prov)
-	f.checkout = checkout.NewService(checkout.NewRepository(db), f.addrs)
+	f.checkout = checkout.NewService(checkout.NewRepository(db), f.addrs, shippingtest.For(t, db).Service)
 	c, err := category.NewService(category.NewRepository(db)).Create(f.ctx, category.Input{Name: "Atasan", Active: true})
 	if err != nil {
 		t.Fatal(err)
@@ -147,7 +152,7 @@ func (f *fixture) newService(p payment.Provider) *payment.Service {
 
 func (f *fixture) product(name, sku string, price int64, stock int) int64 {
 	f.t.Helper()
-	if _, err := product.NewService(product.NewRepository(f.db)).Create(f.ctx, product.Input{
+	if _, err := product.NewService(product.NewRepository(f.db)).Create(f.ctx, product.Input{WeightGrams: 100,
 		CategoryID: f.catID, Name: name, Active: true,
 		Images:   []product.ImageInput{{URL: "data:image/svg+xml;base64,PHN2Zy8+"}},
 		Variants: []product.VariantInput{{SKU: sku, Price: price, Stock: stock}},
@@ -160,7 +165,7 @@ func (f *fixture) product(name, sku string, price int64, stock int) int64 {
 func (f *fixture) user(email string) (userID, addressID int64) {
 	f.t.Helper()
 	userID = testutil.CreateUser(f.t, f.db, email)
-	a, err := f.addrs.Create(f.ctx, userID, address.Input{
+	a, err := f.addrs.Create(f.ctx, userID, address.Input{ShippingAreaID: shippingtest.For(f.t, f.db).AreaID(f.t),
 		Label: "Rumah", RecipientName: "Budi Santoso", Phone: "081234567890",
 		Province: "Jawa Barat", City: "Kota Bandung", District: "Coblong", Village: "Dago",
 		PostalCode: "40135", StreetAddress: "Jl. Ir. H. Juanda No. 100",
@@ -174,9 +179,9 @@ func (f *fixture) user(email string) (userID, addressID int64) {
 // order places a Buy Now order and returns its number.
 func (f *fixture) order(userID, addressID, variantID int64, qty int) string {
 	f.t.Helper()
-	placed, err := f.checkout.PlaceOrder(f.ctx, userID, checkout.PlaceRequest{
+	placed, err := f.checkout.PlaceOrder(f.ctx, userID, quoted(f.t, f.checkout, userID, checkout.PlaceRequest{
 		Source: checkout.Source{VariantID: variantID, Quantity: qty}, AddressID: addressID,
-	})
+	}))
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -251,7 +256,7 @@ func TestPayCreatesAndReusesAttempt(t *testing.T) {
 		t.Errorf("redirect = %q", url)
 	}
 	req := f.prov.created[0]
-	if req.ProviderOrderID != p1 || req.Amount != 258000 || req.Customer.Email != "a@example.com" ||
+	if req.ProviderOrderID != p1 || req.Amount != 258000+ship || req.Customer.Email != "a@example.com" ||
 		req.FinishURL != "https://toko.example/account/orders/"+number+"/payment/finish" {
 		t.Errorf("transaction request = %+v", req)
 	}
@@ -259,14 +264,14 @@ func TestPayCreatesAndReusesAttempt(t *testing.T) {
 	for _, it := range req.Items {
 		sum += it.Price * int64(it.Quantity)
 	}
-	if sum != req.Amount || len(req.Items) != 1 || req.Items[0].ID != "A-1" {
+	if sum != req.Amount || len(req.Items) != 2 || req.Items[0].ID != "A-1" || req.Items[1].ID != "SHIPPING" || req.Items[1].Price != ship {
 		t.Errorf("items %+v must add up to %d", req.Items, req.Amount)
 	}
 	due := f.int("SELECT extract(epoch FROM payment_due_at)::bigint FROM orders WHERE order_number = $1", number)
 	if req.ExpiresAt.Unix() > due || req.ExpiresAt.Unix() < due-60 {
 		t.Errorf("attempt expiry %v must end at the order deadline", req.ExpiresAt)
 	}
-	if got := f.str("SELECT amount::text || ' ' || status || ' ' || snap_token || ' ' || attempt_no FROM payments WHERE provider_order_id = $1", p1); got != "258000 PENDING tok-"+p1+" 1" {
+	if got := f.str("SELECT amount::text || ' ' || status || ' ' || snap_token || ' ' || attempt_no FROM payments WHERE provider_order_id = $1", p1); got != "267000 PENDING tok-"+p1+" 1" {
 		t.Errorf("payment row = %q", got)
 	}
 
@@ -318,11 +323,11 @@ func TestPayGuards(t *testing.T) {
 	}
 
 	// The amount always comes from the order and must match its lines.
-	f.exec("UPDATE orders SET subtotal = 1000, total = 1000 WHERE order_number = $1", number)
+	f.exec("UPDATE orders SET subtotal = 1000, total = 1000 + shipping_cost WHERE order_number = $1", number)
 	if _, err := f.svc.Pay(f.ctx, uid, number); !errors.Is(err, payment.ErrInvalidAmount) || len(f.prov.created) != 0 {
 		t.Errorf("inconsistent amounts: %v (created %d)", err, len(f.prov.created))
 	}
-	f.exec("UPDATE orders SET subtotal = 100000, total = 100000 WHERE order_number = $1", number)
+	f.exec("UPDATE orders SET subtotal = 100000, total = 100000 + shipping_cost WHERE order_number = $1", number)
 
 	// Too late: the deadline passed, the order is expired instead.
 	f.overdue(number, time.Minute)
@@ -363,7 +368,7 @@ func TestProviderUnavailableAndRetryPolicy(t *testing.T) {
 
 	// A declined payment closes the attempt; a new one is only created
 	// when the buyer clicks again.
-	f.prov.set(number+"-P2", payment.StatusDenied, "deny", 100000)
+	f.prov.set(number+"-P2", payment.StatusDenied, "deny", 100000+ship)
 	if err := f.notify(number + "-P2"); err != nil {
 		t.Fatal(err)
 	}
@@ -396,12 +401,12 @@ func TestPaidNotificationIsIdempotent(t *testing.T) {
 		t.Errorf("unknown transaction: %v", err)
 	}
 
-	f.prov.set(p1, payment.StatusPending, "pending", 300000)
+	f.prov.set(p1, payment.StatusPending, "pending", 300000+ship)
 	if err := f.notify(p1); err != nil || f.paymentStatus(p1) != "PENDING" || f.orderStatus(number) != "WAITING_PAYMENT" {
 		t.Errorf("pending: %v %s %s", err, f.paymentStatus(p1), f.orderStatus(number))
 	}
 
-	f.prov.set(p1, payment.StatusPaid, "settlement", 300000)
+	f.prov.set(p1, payment.StatusPaid, "settlement", 300000+ship)
 	for range 3 {
 		if err := f.notify(p1); err != nil {
 			t.Fatal(err)
@@ -443,7 +448,7 @@ func TestNotificationStatuses(t *testing.T) {
 			t.Fatal(err)
 		}
 		before := f.stock(v)
-		f.prov.set(number+"-P1", tc.status, tc.raw, 50000)
+		f.prov.set(number+"-P1", tc.status, tc.raw, 50000+ship)
 		if err := f.notify(number + "-P1"); err != nil {
 			t.Fatal(err)
 		}
@@ -463,7 +468,7 @@ func TestNotificationStatuses(t *testing.T) {
 	}
 	before := f.stock(v)
 	f.overdue(number, time.Second)
-	f.prov.set(number+"-P1", payment.StatusExpired, "expire", 50000*4)
+	f.prov.set(number+"-P1", payment.StatusExpired, "expire", 50000*4+ship)
 	for range 2 { // expire notification delivered twice
 		if err := f.notify(number + "-P1"); err != nil {
 			t.Fatal(err)
@@ -486,7 +491,7 @@ func TestOutOfOrderNotifications(t *testing.T) {
 	number := f.order(uid, addr, v, 1)
 	f.svc.Pay(f.ctx, uid, number)
 	p1 := number + "-P1"
-	f.prov.set(p1, payment.StatusPaid, "settlement", 70000)
+	f.prov.set(p1, payment.StatusPaid, "settlement", 70000+ship)
 	f.notify(p1)
 	stock := f.stock(v)
 	f.overdue(number, time.Hour)
@@ -494,7 +499,7 @@ func TestOutOfOrderNotifications(t *testing.T) {
 		s   payment.Status
 		raw string
 	}{{payment.StatusExpired, "expire"}, {payment.StatusPending, "pending"}, {payment.StatusCancelled, "cancel"}} {
-		f.prov.set(p1, late.s, late.raw, 70000)
+		f.prov.set(p1, late.s, late.raw, 70000+ship)
 		if err := f.notify(p1); err != nil {
 			t.Fatal(err)
 		}
@@ -514,7 +519,7 @@ func TestOutOfOrderNotifications(t *testing.T) {
 		t.Fatal(err)
 	}
 	stock = f.stock(v)
-	f.prov.set(q1, payment.StatusPending, "pending", 140000) // buyer still used the old checkout
+	f.prov.set(q1, payment.StatusPending, "pending", 140000+ship) // buyer still used the old checkout
 	f.prov.cancelled = nil
 	if err := f.notify(q1); err != nil {
 		t.Fatal(err)
@@ -522,7 +527,7 @@ func TestOutOfOrderNotifications(t *testing.T) {
 	if len(f.prov.cancelled) != 1 || f.prov.cancelled[0] != q1 {
 		t.Errorf("a transaction opened on a closed attempt must be cancelled at the provider: %v", f.prov.cancelled)
 	}
-	f.prov.set(q1, payment.StatusPaid, "settlement", 140000)
+	f.prov.set(q1, payment.StatusPaid, "settlement", 140000+ship)
 	if err := f.notify(q1); err != nil {
 		t.Fatal(err)
 	}
@@ -582,7 +587,7 @@ func TestCancelUnpaidOrder(t *testing.T) {
 	// With an open card transaction: cancelled at the provider first.
 	number = f.order(uid, addr, v, 1)
 	f.svc.Pay(f.ctx, uid, number)
-	f.prov.set(number+"-P1", payment.StatusPending, "pending", 80000)
+	f.prov.set(number+"-P1", payment.StatusPending, "pending", 80000+ship)
 	if err := f.svc.CancelOrder(f.ctx, uid, number); err != nil {
 		t.Fatal(err)
 	}
@@ -593,7 +598,7 @@ func TestCancelUnpaidOrder(t *testing.T) {
 	// Provider unreachable: the order is kept (it might be paid meanwhile).
 	number = f.order(uid, addr, v, 1)
 	f.svc.Pay(f.ctx, uid, number)
-	f.prov.set(number+"-P1", payment.StatusPending, "pending", 80000)
+	f.prov.set(number+"-P1", payment.StatusPending, "pending", 80000+ship)
 	f.prov.cancelErr = payment.ErrProviderUnavailable
 	if err := f.svc.CancelOrder(f.ctx, uid, number); !errors.Is(err, payment.ErrCancelUnavailable) || f.orderStatus(number) != "WAITING_PAYMENT" || f.stock(v) != 9 {
 		t.Errorf("provider down: %v %s %d", err, f.orderStatus(number), f.stock(v))
@@ -601,7 +606,7 @@ func TestCancelUnpaidOrder(t *testing.T) {
 	f.prov.cancelErr = nil
 
 	// The provider says it is paid: cancelling becomes the payment.
-	f.prov.set(number+"-P1", payment.StatusPaid, "settlement", 80000)
+	f.prov.set(number+"-P1", payment.StatusPaid, "settlement", 80000+ship)
 	if err := f.svc.CancelOrder(f.ctx, uid, number); !errors.Is(err, payment.ErrAlreadyPaid) {
 		t.Errorf("cancel a paid order: %v", err)
 	}
@@ -690,7 +695,7 @@ func TestExpireOverdue(t *testing.T) {
 	// Still pending at the provider: cancelled there before the order goes.
 	number = f.order(uid, addr, v, 1)
 	f.svc.Pay(f.ctx, uid, number)
-	f.prov.set(number+"-P1", payment.StatusPending, "pending", 60000)
+	f.prov.set(number+"-P1", payment.StatusPending, "pending", 60000+ship)
 	f.overdue(number, 10*time.Minute)
 	if done, err := f.svc.ExpireOverdue(f.ctx, f.orderID(number)); !done || err != nil || f.stock(v) != 20 {
 		t.Errorf("pending at provider: %v %v stock %d", done, err, f.stock(v))
@@ -754,7 +759,7 @@ func TestReservedVariantsAndMissingVariants(t *testing.T) {
 		f.int("SELECT ci.id FROM cart_items ci JOIN carts c ON c.id = ci.cart_id WHERE c.user_id = $1 AND ci.variant_id = $2", uid, b),
 		f.int("SELECT ci.id FROM cart_items ci JOIN carts c ON c.id = ci.cart_id WHERE c.user_id = $1 AND ci.variant_id = $2", uid, c),
 	}
-	placed, err := f.checkout.PlaceOrder(f.ctx, uid, checkout.PlaceRequest{Source: checkout.Source{CartItemIDs: ids}, AddressID: addr})
+	placed, err := f.checkout.PlaceOrder(f.ctx, uid, quoted(f.t, f.checkout, uid, checkout.PlaceRequest{Source: checkout.Source{CartItemIDs: ids}, AddressID: addr}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -778,7 +783,7 @@ func TestReconcile(t *testing.T) {
 	// A payment whose notification never arrived.
 	paid := f.order(uid, addr, v, 1)
 	f.svc.Pay(f.ctx, uid, paid)
-	f.prov.set(paid+"-P1", payment.StatusPaid, "settlement", 90000)
+	f.prov.set(paid+"-P1", payment.StatusPaid, "settlement", 90000+ship)
 	f.exec("UPDATE payments SET created_at = now() - interval '20 minutes' WHERE provider_order_id = $1", paid+"-P1")
 	// An unpaid order past its deadline.
 	late := f.order(uid, addr, v, 2)
@@ -798,4 +803,15 @@ func TestReconcile(t *testing.T) {
 	if rep, _ = cmd.Reconcile(f.ctx, 100); rep.Updated != 0 || rep.Expired != 0 {
 		t.Errorf("second run must change nothing: %+v", rep)
 	}
+}
+
+// quoted adds the cheapest shipping quote for the request, as the checkout
+// page does before the buyer presses "Buat Pesanan".
+func quoted(t testing.TB, co *checkout.Service, userID int64, req checkout.PlaceRequest) checkout.PlaceRequest {
+	t.Helper()
+	d, err := co.Prepare(context.Background(), userID, req.Source, req.AddressID, "")
+	if err == nil && d.Shipping.Selected != nil {
+		req.ShippingQuoteID = d.Shipping.Selected.ID
+	}
+	return req
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"ecommerce/internal/address"
+	"ecommerce/internal/shipping"
 )
 
 const maxKeyLength = 64
@@ -14,16 +15,23 @@ const maxKeyLength = 64
 type Service struct {
 	repo      *Repository
 	addresses *address.Service
+	shipping  *shipping.Service
 }
 
-func NewService(repo *Repository, addresses *address.Service) *Service {
-	return &Service{repo: repo, addresses: addresses}
+// NewService builds the checkout. shipper computes shipping quotes; orders
+// cannot be placed without it (there is no shipping-cost-0 fallback).
+func NewService(repo *Repository, addresses *address.Service, shipper *shipping.Service) *Service {
+	return &Service{repo: repo, addresses: addresses, shipping: shipper}
 }
 
 // Prepare builds the checkout page from current data, without locking.
 // addressID 0 picks the primary address. Lines that cannot be ordered are
-// returned with a Problem so the page can warn.
-func (s *Service) Prepare(ctx context.Context, userID int64, src Source, addressID int64) (Draft, error) {
+// returned with a Problem so the page can warn. Shipping quotes are
+// computed for the address (rates come from the provider or the short rate
+// cache); quoteID selects one of them, otherwise the cheapest is selected.
+// A provider failure is not an error: the draft says shipping is
+// unavailable and cannot be ordered.
+func (s *Service) Prepare(ctx context.Context, userID int64, src Source, addressID int64, quoteID string) (Draft, error) {
 	if !src.valid() {
 		return Draft{}, ErrNothingToCheckout
 	}
@@ -52,8 +60,63 @@ func (s *Service) Prepare(ctx context.Context, userID int64, src Source, address
 	for _, l := range lines {
 		d.Subtotal += l.Subtotal()
 	}
+	if err := s.quote(ctx, userID, &d, quoteID); err != nil {
+		return Draft{}, err
+	}
+	if d.Shipping.Selected != nil {
+		d.ShippingCost = d.Shipping.Selected.Rate.Price
+	}
 	d.Total = d.Subtotal + d.ShippingCost - d.Discount
 	return d, nil
+}
+
+// quote fills d.Shipping. Only database errors are returned.
+func (s *Service) quote(ctx context.Context, userID int64, d *Draft, quoteID string) error {
+	switch {
+	case s.shipping == nil || !s.shipping.Enabled():
+		d.Shipping.State = ShippingNotConfigured
+		return nil
+	case d.Address == nil:
+		d.Shipping.State = ShippingNeedAddress
+		return nil
+	case !d.Address.HasShippingArea():
+		d.Shipping.State = ShippingNeedArea
+		return nil
+	case d.Blocked():
+		d.Shipping.State = ShippingBlocked
+		return nil
+	}
+	quotes, err := s.shipping.Quotes(ctx, userID, destinationOf(*d.Address), packageOf(d.Lines))
+	switch {
+	case errors.Is(err, shipping.ErrNoCourier):
+		d.Shipping.State = ShippingNoCourier
+		return nil
+	case errors.Is(err, shipping.ErrAreaNotFound):
+		d.Shipping.State = ShippingNeedArea // an area of another provider
+		return nil
+	case errors.Is(err, shipping.ErrPackageInvalid):
+		d.Shipping.State = ShippingBlocked
+		return nil
+	case errors.Is(err, shipping.ErrUnavailable), errors.Is(err, shipping.ErrRejected), errors.Is(err, shipping.ErrNotConfigured):
+		d.Shipping.State = ShippingUnavailable
+		return nil
+	case err != nil:
+		return err
+	case len(quotes) == 0:
+		d.Shipping.State = ShippingNoCourier
+		return nil
+	}
+	d.Shipping.State, d.Shipping.Options = ShippingReady, quotes
+	for i := range quotes {
+		if quotes[i].ID == quoteID {
+			d.Shipping.Selected = &quotes[i]
+		}
+	}
+	if d.Shipping.Selected == nil {
+		d.Shipping.Selected = &quotes[0] // cheapest
+		d.Shipping.Changed = quoteID != ""
+	}
+	return nil
 }
 
 // PlaceOrder creates an order in one transaction:
@@ -61,10 +124,13 @@ func (s *Service) Prepare(ctx context.Context, userID int64, src Source, address
 //  1. lock the selected cart lines (Buy Now: no cart involved),
 //  2. lock their variants in id order and re-validate availability, stock
 //     and quantity against current data,
-//  3. compare the total with what the customer saw,
-//  4. copy the user's address,
-//  5. insert order and items, decrement stock with "stock >= qty" guards,
-//     and delete only the purchased cart lines.
+//  3. copy the user's address and lock the chosen shipping quote: it must
+//     be the user's, unused, unexpired and for this destination, origin
+//     and package (else shipping.ErrQuoteChanged),
+//  4. compare the total (items + shipping) with what the customer saw,
+//  5. insert order, items and the shipping snapshot, decrement stock with
+//     "stock >= qty" guards, delete only the purchased cart lines and mark
+//     the quote used.
 //
 // Any failure rolls everything back. A repeated submission with the same
 // idempotency key returns the first order (Placed.Existing).
@@ -95,13 +161,12 @@ func (s *Service) PlaceOrder(ctx context.Context, userID int64, req PlaceRequest
 				case ProblemNone:
 				case ProblemUnavailable:
 					return ErrUnavailable
+				case ProblemNoWeight:
+					return ErrNotShippable
 				default:
 					return ErrStockChanged
 				}
 				subtotal += l.Subtotal()
-			}
-			if req.ExpectedTotal != 0 && req.ExpectedTotal != subtotal {
-				return ErrPriceChanged
 			}
 			if req.AddressID == 0 {
 				return ErrAddressRequired
@@ -110,14 +175,36 @@ func (s *Service) PlaceOrder(ctx context.Context, userID int64, req PlaceRequest
 			if err != nil {
 				return err
 			}
-			c, err := tx.Create(ctx, userID, req.IdempotencyKey, addr, lines, subtotal)
+			if s.shipping == nil {
+				return shipping.ErrNotConfigured
+			}
+			if addr.ShippingAreaID == nil {
+				return ErrAreaRequired
+			}
+			if req.ShippingQuoteID == "" {
+				return ErrShippingRequired
+			}
+			dest := shipping.Destination{Provider: deref(addr.ShippingAreaProvider), AreaID: *addr.ShippingAreaID,
+				Postal: addr.PostalCode, Lat: addr.Latitude, Lng: addr.Longitude}
+			sq, err := s.shipping.UseQuote(ctx, tx.q, userID, req.ShippingQuoteID, dest, packageOf(lines))
+			if err != nil {
+				return err
+			}
+			total := subtotal + sq.Rate.Price
+			if req.ExpectedTotal != 0 && req.ExpectedTotal != total {
+				return ErrPriceChanged
+			}
+			c, err := tx.Create(ctx, userID, req.IdempotencyKey, addr, lines, subtotal, sq)
 			if err != nil {
 				return err
 			}
 			if c.StockUpdated != len(lines) {
 				return ErrStockChanged // a stock guard failed: roll back
 			}
-			placed = Placed{OrderNumber: c.Number, Total: subtotal}
+			if !c.QuoteUsed {
+				return shipping.ErrQuoteChanged // used meanwhile: roll back
+			}
+			placed = Placed{OrderNumber: c.Number, Total: total}
 			return nil
 		})
 	})
@@ -153,6 +240,13 @@ func retryDeadlock(fn func() error) error {
 		err = fn()
 	}
 	return err
+}
+
+func deref(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 // valid reports whether the source names something to buy.

@@ -19,9 +19,62 @@
 {{- else}}{{range .CartItemIDs}}<input type="hidden" name="item" value="{{.}}">{{end}}{{end -}}
 {{end}}
 
+{{/* Shipping: the selected quote ("JNE Reguler · 2–3 hari · Rp18.000 Ubah")
+     and a sheet with every option. Choosing one reloads the checkout from
+     the server (HTMX, or the noscript button): the browser never computes a
+     price, and the order form only carries the quote id. */}}
+{{define "checkout-shipping"}}
+{{$p := .Data}}{{$d := $p.Draft}}{{$s := $d.Shipping}}
+<section class="co-card co-shipping" aria-labelledby="co-shipping">
+  <div class="co-card__head">
+    <h2 class="co-card__title" id="co-shipping">{{icon "truck"}} Pengiriman</h2>
+    {{if gt (len $s.Options) 1}}
+    <details class="sheet">
+      <summary class="link-btn">Ubah</summary>
+      <div class="sheet__panel" role="dialog" aria-label="Pilih pengiriman">
+        <p class="sheet__title">Pilih Pengiriman</p>
+        <form class="sheet__body" method="get" action="/checkout"
+              hx-get="/checkout" hx-trigger="change" hx-target="#checkout" hx-swap="outerHTML" hx-push-url="true">
+          {{template "checkout-source" $d.Source}}
+          {{with $d.Address}}<input type="hidden" name="address" value="{{.ID}}">{{end}}
+          {{range $s.Options}}
+          {{$on := and $s.Selected (eq .ID $s.Selected.ID)}}
+          <label class="ship-option{{if $on}} is-selected{{end}}">
+            <input type="radio" name="ship" value="{{.ID}}"{{if $on}} checked{{end}}>
+            <span class="ship-option__body">
+              <span class="ship-option__name">{{.Rate.CourierName}} {{.Rate.ServiceName}}</span>
+              {{with .Rate.EstimateLabel}}<span class="ship-option__eta">Estimasi {{.}}</span>{{end}}
+            </span>
+            <span class="ship-option__price">{{rupiah .Rate.Price}}</span>
+          </label>
+          {{end}}
+          <noscript><button class="btn btn--primary btn--block" type="submit">Gunakan pengiriman ini</button></noscript>
+        </form>
+      </div>
+    </details>
+    {{end}}
+  </div>
+  {{with $s.Selected}}
+  <div class="ship-chosen">
+    <div class="ship-chosen__body">
+      <p class="ship-chosen__name">{{.Rate.CourierName}} {{.Rate.ServiceName}}</p>
+      {{with .Rate.EstimateLabel}}<p class="ship-chosen__eta">Estimasi tiba {{.}}</p>{{end}}
+    </div>
+    <p class="ship-chosen__price">{{rupiah .Rate.Price}}</p>
+  </div>
+  {{if $s.Changed}}<p class="co-note co-note--warn">Ongkos kirim diperbarui. Periksa pilihan pengiriman sebelum membuat pesanan.</p>{{end}}
+  {{else}}
+  <p class="muted co-shipping__message">{{$s.Message}}</p>
+  {{if eq $s.State "AREA_REQUIRED"}}<a class="btn btn--outline" href="{{$p.EditAddressURL}}">{{icon "map-pin"}}Lengkapi Lokasi Pengiriman</a>
+  {{else if eq $s.State "PROVIDER_UNAVAILABLE"}}<a class="btn btn--outline" href="{{$p.CurrentURL}}">Coba Lagi</a>{{end}}
+  {{end}}
+</section>
+{{end}}
+
 {{/* Single-page checkout. Every number here is computed by the server from
-     current data; the order form only carries IDs, the total the customer
-     saw (to detect price changes) and an idempotency key. */}}
+     current data; the order form only carries IDs (address, shipping quote),
+     the total the customer saw (to detect price changes) and an
+     idempotency key. */}}
 {{define "checkout-body"}}
 {{$p := .Data}}{{$d := $p.Draft}}
 <div id="checkout" class="checkout">
@@ -89,35 +142,34 @@
     </ul>
   </section>
 
-  {{/* Shipping, vouchers and payment are later phases: shown as pending,
-       never as free or as a fake method. */}}
-  <section class="co-card co-pending" data-phase="shipping">
-    <h2 class="co-card__title">{{icon "truck"}} Pengiriman</h2>
-    <p class="muted">Belum tersedia. Kurir dan ongkos kirim akan ditentukan pada tahap pengiriman.</p>
-  </section>
+  {{template "checkout-shipping" .}}
+
+  {{/* Vouchers are a later phase: shown as pending, never as a fake discount. */}}
   <section class="co-card co-pending" data-phase="voucher">
     <h2 class="co-card__title">{{icon "ticket"}} Voucher</h2>
     <p class="muted">Belum tersedia.</p>
   </section>
   <section class="co-card co-pending" data-phase="6">
     <h2 class="co-card__title">{{icon "wallet"}} Metode Pembayaran</h2>
-    <p class="muted">Pembayaran online akan tersedia pada tahap berikutnya. Pesanan dibuat dengan status <strong>Belum Bayar</strong>.</p>
+    <p class="muted">Pilih metode pembayaran setelah pesanan dibuat (Midtrans). Pesanan dibuat dengan status <strong>Belum Bayar</strong>.</p>
   </section>
 
   <section class="co-card" aria-labelledby="co-summary">
     <h2 class="co-card__title" id="co-summary">Rincian Pembayaran</h2>
     <dl class="co-summary">
       <div><dt>Subtotal Produk ({{$d.Quantity}} barang)</dt><dd>{{rupiah $d.Subtotal}}</dd></div>
-      <div><dt>Ongkos Kirim</dt><dd class="muted">Belum dihitung</dd></div>
+      {{with $d.Shipping.Selected}}<div><dt>Ongkos Kirim <span class="muted">({{grams $d.WeightGrams}})</span></dt><dd>{{rupiah .Rate.Price}}</dd></div>
+      {{else}}<div><dt>Ongkos Kirim</dt><dd class="muted">Belum dihitung</dd></div>{{end}}
       <div><dt>Diskon</dt><dd class="muted">–</dd></div>
       <div class="co-summary__total"><dt>Total Pesanan</dt><dd>{{rupiah $d.Total}}</dd></div>
     </dl>
-    <p class="co-note">Total belum termasuk ongkos kirim.</p>
+    {{if not $d.Shipping.Selected}}<p class="co-note">Total belum termasuk ongkos kirim: pesanan dapat dibuat setelah pengiriman dipilih.</p>{{end}}
   </section>
 
   <form class="co-bar" method="post" action="/checkout/order">
     {{template "checkout-source" $d.Source}}
     {{with $d.Address}}<input type="hidden" name="address_id" value="{{.ID}}">{{end}}
+    {{with $d.Shipping.Selected}}<input type="hidden" name="shipping_quote_id" value="{{.ID}}">{{end}}
     <input type="hidden" name="expected_total" value="{{$d.Total}}">
     <input type="hidden" name="key" value="{{$p.Key}}">
     <div class="co-bar__total"><span>Total Pesanan</span><strong>{{rupiah $d.Total}}</strong></div>

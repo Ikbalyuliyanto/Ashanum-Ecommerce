@@ -5,20 +5,32 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
 	"ecommerce/internal/auth"
+	"ecommerce/internal/shipping"
 	"ecommerce/internal/validate"
 	"ecommerce/internal/view"
 )
 
-type Handler struct {
-	svc  *Service
-	view *view.Renderer
+// AreaSearch is the delivery area search (shipping.Service).
+type AreaSearch interface {
+	Enabled() bool
+	SearchAreas(ctx context.Context, query string) ([]shipping.Area, error)
+	Area(ctx context.Context, id string) (shipping.Area, error)
 }
 
-func NewHandler(svc *Service, v *view.Renderer) *Handler { return &Handler{svc: svc, view: v} }
+type Handler struct {
+	svc   *Service
+	areas AreaSearch
+	view  *view.Renderer
+}
+
+func NewHandler(svc *Service, areas AreaSearch, v *view.Renderer) *Handler {
+	return &Handler{svc: svc, areas: areas, view: v}
+}
 
 type listPage struct {
 	Addresses []Address
@@ -33,6 +45,13 @@ type formPage struct {
 	IsPrimary bool
 	Errors    validate.Errors
 	Error     string
+
+	// Delivery area picker.
+	ShippingEnabled bool
+	AreaLabel       string // the chosen area
+	AreaQuery       string
+	AreaResults     []shipping.Area
+	AreaError       string
 }
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
@@ -41,7 +60,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) NewForm(w http.ResponseWriter, r *http.Request) {
-	h.view.Render(w, r, http.StatusOK, "user/address-form", formPage{
+	h.render(w, r, http.StatusOK, formPage{
 		Form: Input{Label: "Rumah"},
 		Next: view.SafePath(r.URL.Query().Get("next"), ""),
 	})
@@ -53,8 +72,66 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	page := formPage{Form: in, Next: view.SafePath(r.PostForm.Get("next"), "")}
+	if h.searching(w, r, page) {
+		return
+	}
 	_, err := h.svc.Create(r.Context(), p.UserID, in)
-	h.afterSave(w, r, formPage{Form: in, Next: view.SafePath(r.PostForm.Get("next"), "")}, err)
+	h.afterSave(w, r, page, err)
+}
+
+// searching handles the "Cari" button of the area picker without
+// JavaScript: the form is shown again with the results, nothing is saved.
+func (h *Handler) searching(w http.ResponseWriter, r *http.Request, page formPage) bool {
+	if r.PostForm.Get("intent") != "search_area" {
+		return false
+	}
+	page.AreaQuery = r.PostForm.Get("area_q")
+	page.AreaResults, page.AreaError = h.search(r.Context(), page.AreaQuery)
+	h.render(w, r, http.StatusOK, page)
+	return true
+}
+
+func (h *Handler) search(ctx context.Context, q string) ([]shipping.Area, string) {
+	if h.areas == nil || !h.areas.Enabled() {
+		return nil, shipping.Message(shipping.ErrNotConfigured)
+	}
+	areas, err := h.areas.SearchAreas(ctx, q)
+	if msg := shipping.Message(err); err != nil && msg != "" {
+		if errors.Is(err, shipping.ErrUnavailable) || errors.Is(err, shipping.ErrRejected) {
+			msg = "Pencarian lokasi sedang tidak tersedia. Silakan coba lagi."
+		}
+		return nil, msg
+	} else if err != nil {
+		return nil, "Pencarian lokasi sedang tidak tersedia. Silakan coba lagi."
+	}
+	if len(areas) == 0 {
+		return nil, "Lokasi tidak ditemukan. Coba nama kecamatan lain atau kode pos."
+	}
+	return areas, ""
+}
+
+// Areas answers the HTMX area search: GET /account/addresses/areas?area_q=
+// returns the result list (a fragment of the address form).
+func (h *Handler) Areas(w http.ResponseWriter, r *http.Request) {
+	page := formPage{ShippingEnabled: h.areas != nil && h.areas.Enabled(), AreaQuery: strings.TrimSpace(r.URL.Query().Get("area_q"))}
+	if len([]rune(page.AreaQuery)) >= 3 {
+		page.AreaResults, page.AreaError = h.search(r.Context(), page.AreaQuery)
+	}
+	h.view.Fragment(w, r, http.StatusOK, "user/address-form", "area-results", page)
+}
+
+// render shows the address form with the chosen area's label.
+func (h *Handler) render(w http.ResponseWriter, r *http.Request, status int, page formPage) {
+	page.ShippingEnabled = h.areas != nil && h.areas.Enabled()
+	if id := page.Form.ShippingAreaID; id != "" && page.AreaLabel == "" && page.ShippingEnabled {
+		if a, err := h.areas.Area(r.Context(), id); err == nil {
+			page.AreaLabel = a.Label
+		} else {
+			page.Form.ShippingAreaID = "" // unknown id: not shown as chosen
+		}
+	}
+	h.view.Render(w, r, status, "user/address-form", page)
 }
 
 func (h *Handler) EditForm(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +152,8 @@ func (h *Handler) EditForm(w http.ResponseWriter, r *http.Request) {
 	}
 	form := InputFrom(a)
 	form.Phone = view.LocalPhone(form.Phone)
-	h.view.Render(w, r, http.StatusOK, "user/address-form", formPage{ID: a.ID, Form: form, IsPrimary: a.IsPrimary})
+	h.render(w, r, http.StatusOK, formPage{ID: a.ID, Form: form, IsPrimary: a.IsPrimary, AreaLabel: a.ShippingAreaLabel,
+		Next: view.SafePath(r.URL.Query().Get("next"), "")})
 }
 
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
@@ -89,13 +167,24 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	_, err := h.svc.Update(r.Context(), p.UserID, id, in)
-	page := formPage{ID: id, Form: in}
-	if err != nil {
-		// Re-rendering after a failed save: show the stored primary state.
-		if cur, getErr := h.svc.Get(r.Context(), p.UserID, id); getErr == nil {
-			page.IsPrimary = cur.IsPrimary
+	page := formPage{ID: id, Form: in, Next: view.SafePath(r.PostForm.Get("next"), "")}
+	var err error
+	if r.PostForm.Get("intent") != "search_area" {
+		_, err = h.svc.Update(r.Context(), p.UserID, id, in)
+		if err == nil {
+			h.afterSave(w, r, page, nil)
+			return
 		}
+	}
+	// Re-rendering (area search or failed save): show the stored primary state.
+	cur, getErr := h.svc.Get(r.Context(), p.UserID, id)
+	if errors.Is(getErr, ErrNotFound) {
+		h.view.Error(w, r, http.StatusNotFound)
+		return
+	}
+	page.IsPrimary = cur.IsPrimary
+	if h.searching(w, r, page) {
+		return
 	}
 	h.afterSave(w, r, page, err)
 }
@@ -143,9 +232,9 @@ func (h *Handler) afterSave(w http.ResponseWriter, r *http.Request, page formPag
 		h.view.Error(w, r, http.StatusNotFound)
 	case errors.Is(err, ErrLimitReached):
 		page.Error = "Anda sudah memiliki " + strconv.Itoa(MaxPerUser) + " alamat. Hapus salah satu sebelum menambah alamat baru."
-		h.view.Render(w, r, http.StatusUnprocessableEntity, "user/address-form", page)
+		h.render(w, r, http.StatusUnprocessableEntity, page)
 	case errors.As(err, &page.Errors):
-		h.view.Render(w, r, http.StatusUnprocessableEntity, "user/address-form", page)
+		h.render(w, r, http.StatusUnprocessableEntity, page)
 	default:
 		h.view.ServerError(w, r, err)
 	}
@@ -185,6 +274,8 @@ func (h *Handler) parseInput(w http.ResponseWriter, r *http.Request) (Input, boo
 		Longitude:     f.Get("longitude"),
 		MapsURL:       f.Get("maps_url"),
 		MakePrimary:   f.Get("make_primary") == "1",
+
+		ShippingAreaID: strings.TrimSpace(f.Get("shipping_area_id")),
 	}, true
 }
 

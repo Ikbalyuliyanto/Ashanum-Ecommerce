@@ -33,6 +33,8 @@
           {{.StreetAddress}}
           <span class="address-card__region">{{.Village}}, {{.District}}, {{.City}}, {{.Province}}, {{.PostalCode}}</span>
         </p>
+        {{if .HasShippingArea}}<p class="address-card__area">{{icon "truck"}} {{.ShippingAreaLabel}}</p>
+        {{else}}<p class="address-card__area is-missing">Lokasi pengiriman belum dipilih. <a href="/account/addresses/{{.ID}}/edit">Lengkapi</a> agar ongkos kirim bisa dihitung.</p>{{end}}
         <div class="address-card__tags">
           <span class="chip">{{.Label}}</span>
           {{if .IsPrimary}}<span class="badge">Utama</span>{{end}}

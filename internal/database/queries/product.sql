@@ -105,8 +105,10 @@ WHERE p.slug = @slug AND p.active AND c.active;
 -- Admin-ready writes (used by product.Service.Create inside a transaction).
 
 -- name: CreateProduct :one
-INSERT INTO products (category_id, name, slug, description, brand, active, featured, flash_sale)
-VALUES (@category_id, @name, @slug, @description, @brand, @active, @featured, @flash_sale)
+INSERT INTO products (category_id, name, slug, description, brand, active, featured, flash_sale,
+                      weight_grams, length_cm, width_cm, height_cm)
+VALUES (@category_id, @name, @slug, @description, @brand, @active, @featured, @flash_sale,
+        @weight_grams, sqlc.narg('length_cm'), sqlc.narg('width_cm'), sqlc.narg('height_cm'))
 RETURNING id;
 
 -- name: CreateProductImage :exec
@@ -124,8 +126,8 @@ VALUES (@attribute_id, @value, @display_order)
 RETURNING id;
 
 -- name: CreateProductVariant :one
-INSERT INTO product_variants (product_id, sku, price, original_price, stock, active)
-VALUES (@product_id, @sku, @price, @original_price, @stock, true)
+INSERT INTO product_variants (product_id, sku, price, original_price, stock, weight_grams, active)
+VALUES (@product_id, @sku, @price, @original_price, @stock, sqlc.narg('weight_grams'), true)
 RETURNING id;
 
 -- name: CreateProductVariantValue :exec
@@ -143,7 +145,9 @@ SELECT p.id, p.name, p.slug, p.brand, p.active, p.price, p.price_max, p.in_stock
        (SELECT count(*) FROM product_variants v WHERE v.product_id = p.id)::int AS variant_count,
        (SELECT coalesce(sum(v.stock), 0) FROM product_variants v WHERE v.product_id = p.id AND v.active)::int AS stock,
        coalesce((SELECT i.url FROM product_images i WHERE i.product_id = p.id
-                 ORDER BY i.display_order, i.id LIMIT 1), '')::text AS image_url
+                 ORDER BY i.display_order, i.id LIMIT 1), '')::text AS image_url,
+       (p.weight_grams = 0 AND EXISTS (SELECT 1 FROM product_variants v
+                                       WHERE v.product_id = p.id AND v.active AND v.weight_grams IS NULL))::boolean AS weight_missing
 FROM products p
 JOIN categories c ON c.id = p.category_id
 WHERE (sqlc.narg(category_id)::bigint IS NULL OR p.category_id = sqlc.narg(category_id))
@@ -158,6 +162,7 @@ LIMIT @row_limit OFFSET @row_offset;
 -- name: AdminProduct :one
 SELECT p.id, p.category_id, p.name, p.slug, p.description, p.brand, p.active, p.featured, p.flash_sale,
        p.sold_count, p.rating_average, p.rating_count, p.created_at, p.updated_at,
+       p.weight_grams, p.length_cm, p.width_cm, p.height_cm,
        coalesce((SELECT json_agg(json_build_object('url', i.url, 'alt', i.alt)
                                  ORDER BY i.display_order, i.id)
                  FROM product_images i WHERE i.product_id = p.id), '[]')::json AS images,
@@ -170,7 +175,7 @@ SELECT p.id, p.category_id, p.name, p.slug, p.description, p.brand, p.active, p.
                  FROM product_attributes a WHERE a.product_id = p.id), '[]')::json AS attributes,
        coalesce((SELECT json_agg(json_build_object(
                           'id', v.id, 'sku', v.sku, 'price', v.price, 'original_price', v.original_price,
-                          'stock', v.stock, 'active', v.active,
+                          'stock', v.stock, 'active', v.active, 'weight_grams', v.weight_grams,
                           'value_ids', (SELECT coalesce(json_agg(vv.value_id ORDER BY a.display_order, a.id), '[]')
                                         FROM product_variant_values vv
                                         JOIN product_attributes a ON a.id = vv.attribute_id
@@ -185,7 +190,9 @@ SELECT id, name, active FROM products WHERE id = @id FOR UPDATE;
 
 -- name: UpdateProduct :exec
 UPDATE products SET category_id = @category_id, name = @name, slug = @slug, description = @description,
-                    brand = @brand, active = @active, featured = @featured, flash_sale = @flash_sale
+                    brand = @brand, active = @active, featured = @featured, flash_sale = @flash_sale,
+                    weight_grams = @weight_grams, length_cm = sqlc.narg('length_cm'),
+                    width_cm = sqlc.narg('width_cm'), height_cm = sqlc.narg('height_cm')
 WHERE id = @id;
 
 -- name: SetProductActive :execrows
@@ -195,7 +202,7 @@ UPDATE products SET active = @active WHERE id = @id AND active <> @active;
 DELETE FROM product_images WHERE product_id = @product_id;
 
 -- name: LockProductVariant :one
-SELECT id, product_id, sku, price, original_price, stock, active
+SELECT id, product_id, sku, price, original_price, stock, active, weight_grams
 FROM product_variants
 WHERE id = @id AND product_id = @product_id
 FOR UPDATE;
@@ -203,12 +210,13 @@ FOR UPDATE;
 -- UpdateVariant changes what a variant sells for; stock is never written
 -- here (inventory adjustments only). The summary trigger refreshes products.
 -- name: UpdateVariant :exec
-UPDATE product_variants SET sku = @sku, price = @price, original_price = sqlc.narg('original_price'), active = @active
+UPDATE product_variants SET sku = @sku, price = @price, original_price = sqlc.narg('original_price'), active = @active,
+                            weight_grams = sqlc.narg('weight_grams')
 WHERE id = @id AND product_id = @product_id;
 
 -- name: CreateVariantRow :one
-INSERT INTO product_variants (product_id, sku, price, original_price, stock, active)
-VALUES (@product_id, @sku, @price, sqlc.narg('original_price'), @stock, true)
+INSERT INTO product_variants (product_id, sku, price, original_price, stock, weight_grams, active)
+VALUES (@product_id, @sku, @price, sqlc.narg('original_price'), @stock, sqlc.narg('weight_grams'), true)
 RETURNING id;
 
 -- VariantCombos lists each variant's value per attribute (attribute order),

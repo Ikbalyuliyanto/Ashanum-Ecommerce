@@ -22,9 +22,19 @@
           <button class="btn btn--primary" type="submit">{{icon "check-circle"}} Konfirmasi &amp; Proses</button>
         </form>
         {{end}}
+        {{if and $o.CanBook .Data.BookingEnabled}}
+        <form class="adm-book" action="/admin/orders/{{$o.Number}}/shipment/book" method="post">
+          <p>Pembeli memilih <strong>{{$o.Shipping.Name}}</strong>{{with $o.Shipping.EstimateLabel}} ({{.}}){{end}} · {{rupiah $o.ShippingCost}}. Buat pengiriman di {{.Data.ProviderName}} untuk memanggil kurir dan mendapatkan nomor resi.</p>
+          <button class="btn btn--primary" type="submit">{{icon "truck"}} Buat Pengiriman</button>
+          <p class="muted adm-note">Aman diklik ulang: permintaan yang sama tidak membuat pengiriman ganda. Status pesanan berubah menjadi Dikirim setelah kurir menjemput paket.</p>
+        </form>
+        {{end}}
+        {{with $o.Shipment}}{{if not .Manual}}{{template "adm-shipment-actions" (dict "Order" $o "Shipment" .)}}{{end}}{{end}}
         {{if $o.CanShip}}
+        <details class="adm-more"{{if or $e (not (and $o.CanBook $.Data.BookingEnabled))}} open{{end}}>
+        <summary>{{icon "edit"}} {{if and $o.CanBook $.Data.BookingEnabled}}Kirim manual (cadangan){{else}}Kirim manual{{end}}</summary>
         <form class="adm-form" action="/admin/orders/{{$o.Number}}/ship" method="post">
-          <p class="muted">Isi data pengiriman secara manual (belum terhubung ke kurir; tidak ada pelacakan otomatis).</p>
+          <p class="muted">Isi data pengiriman sendiri bila tidak memakai penyedia (mis. penyedia sedang gangguan). Tidak ada pelacakan otomatis untuk pengiriman manual.</p>
           {{template "field" (dict "ID" "courier" "Name" "courier" "Label" "Kurir" "Value" .Data.Ship.Courier "Required" true "Max" 60 "Placeholder" "mis. JNE, J&T, SiCepat" "Error" (index $e "courier"))}}
           {{template "field" (dict "ID" "service" "Name" "service" "Label" "Layanan" "Value" .Data.Ship.Service "Optional" true "Max" 60 "Placeholder" "mis. REG" "Error" (index $e "service"))}}
           {{template "field" (dict "ID" "tracking" "Name" "tracking" "Label" "Nomor resi" "Value" .Data.Ship.Tracking "Optional" true "Max" 60 "Error" (index $e "tracking"))}}
@@ -34,10 +44,11 @@
           </div>
           <button class="btn btn--primary" type="submit">{{icon "truck"}} Tandai Dikirim</button>
         </form>
+        </details>
         {{end}}
         {{if $o.CanComplete}}
         <form action="/admin/orders/{{$o.Number}}/complete" method="post">
-          <p>Barang sudah sampai ke pembeli? Setelah selesai, pembeli bisa memberi ulasan dan mengajukan pengembalian.</p>
+          <p>{{if and $o.Shipment (eq $o.Shipment.Status "DELIVERED")}}Kurir melaporkan paket <strong>terkirim</strong>. {{end}}Barang sudah sampai ke pembeli? Setelah selesai, pembeli bisa memberi ulasan dan mengajukan pengembalian (jendela retur dimulai saat ini).</p>
           <button class="btn btn--primary" type="submit">{{icon "check-circle"}} Selesaikan Pesanan</button>
         </form>
         {{end}}
@@ -80,7 +91,7 @@
         </ul>
         <dl class="adm-dl">
           <div><dt>Subtotal</dt><dd>{{rupiah $o.Subtotal}}</dd></div>
-          <div><dt>Ongkos kirim</dt><dd>{{rupiah $o.ShippingCost}} <span class="muted">(belum dihitung)</span></dd></div>
+          <div><dt>Ongkos kirim</dt><dd>{{rupiah $o.ShippingCost}} <span class="muted">{{with $o.Shipping}}({{.Name}}){{else}}(pesanan lama: belum dihitung){{end}}</span></dd></div>
           {{if $o.Discount}}<div><dt>Diskon</dt><dd>−{{rupiah $o.Discount}}</dd></div>{{end}}
           <div class="adm-dl__total"><dt>Total</dt><dd>{{rupiah $o.Total}}</dd></div>
         </dl>
@@ -105,14 +116,38 @@
           <div><dt>Penerima</dt><dd>{{$o.Address.RecipientName}} · {{phone $o.Address.Phone}}</dd></div>
           <div><dt>Alamat</dt><dd>{{$o.Address.Street}}, {{$o.Address.Village}}, {{$o.Address.District}}, {{$o.Address.City}}, {{$o.Address.Province}} {{$o.Address.PostalCode}}</dd></div>
         </dl>
-        {{with $o.Shipment}}
-        <h3 class="adm-h3">Pengiriman (input manual)</h3>
+        {{with $o.Shipping}}
+        <h3 class="adm-h3">Pilihan pembeli (checkout)</h3>
         <dl class="adm-dl">
+          <div><dt>Kurir</dt><dd>{{.Name}} <span class="muted">({{.CourierCode}}/{{.ServiceCode}})</span></dd></div>
+          <div><dt>Ongkir</dt><dd>{{rupiah $o.ShippingCost}}{{with .EstimateLabel}} · {{.}}{{end}}</dd></div>
+          <div><dt>Berat</dt><dd>{{grams .WeightGrams}}</dd></div>
+          {{with .AreaLabel}}<div><dt>Area tujuan</dt><dd>{{.}}</dd></div>{{end}}
+        </dl>
+        {{end}}
+        {{with $o.Shipment}}
+        <h3 class="adm-h3">Pengiriman {{if .Manual}}(input manual){{else}}({{.ProviderLabel}}){{end}}</h3>
+        <dl class="adm-dl">
+          {{if not .Manual}}<div><dt>Status</dt><dd><span class="ship-status ship-status--{{.Status}}">{{.Status.Label}}</span></dd></div>{{end}}
           <div><dt>Kurir</dt><dd>{{.Courier}}{{with .Service}} · {{.}}{{end}}</dd></div>
-          <div><dt>Nomor resi</dt><dd>{{or .Tracking "—"}}</dd></div>
-          <div><dt>Dikirim</dt><dd>{{datetime .ShippedAt}}</dd></div>
+          <div><dt>Nomor resi</dt><dd>{{or .Tracking "—"}}{{with .TrackingURL}} · <a href="{{.}}" target="_blank" rel="noopener noreferrer">lacak</a>{{end}}</dd></div>
+          {{with .BookedAt}}<div><dt>Dibuat</dt><dd>{{datetime .}}</dd></div>{{end}}
+          {{with .ShippedAt}}<div><dt>Dikirim</dt><dd>{{datetime .}}</dd></div>{{end}}
+          {{with .DeliveredAt}}<div><dt>Terkirim</dt><dd>{{datetime .}}</dd></div>{{end}}
+          {{with .LastSyncedAt}}<div><dt>Sinkron terakhir</dt><dd>{{datetime .}}</dd></div>{{end}}
           {{with .Note}}<div><dt>Catatan</dt><dd>{{.}}</dd></div>{{end}}
         </dl>
+        {{if .Events}}
+        <ol class="ship-timeline ship-timeline--admin">
+          {{range $i, $e := .Events}}<li class="ship-timeline__item{{if eq $i 0}} is-latest{{end}}"><p class="ship-timeline__text">{{$e.Text}}</p><p class="ship-timeline__time">{{datetime $e.Time}} · {{$e.Status.Label}}</p></li>{{end}}
+        </ol>
+        {{end}}
+        {{end}}
+        {{with $o.PastShipments}}
+        <h3 class="adm-h3">Riwayat pengiriman sebelumnya</h3>
+        <ul class="adm-list">
+          {{range .}}<li>{{.Courier}}{{with .Service}} {{.}}{{end}} · <span class="adm-badge">{{.Status.Label}}</span>{{with .Tracking}} · {{.}}{{end}}{{with .FailureReason}} · <span class="muted">{{.}}</span>{{end}} · {{datetime .CreatedAt}}</li>{{end}}
+        </ul>
         {{end}}
       </div>
 
@@ -138,4 +173,34 @@
     </div>
   </div>
 </section>
+{{end}}
+
+{{/* Provider shipment actions: retry a booking without answer, refresh
+     the status, cancel before pickup. (dict "Order" Detail "Shipment" Shipment) */}}
+{{define "adm-shipment-actions"}}
+{{$o := .Order}}{{$s := .Shipment}}
+<div class="adm-shipment">
+  {{if eq (print $s.Status) "PENDING"}}
+  <p class="alert alert--warning">Permintaan pengiriman belum mendapat jawaban dari penyedia (gangguan jaringan atau penyedia). Coba lagi: nomor referensi yang sama dipakai, sehingga tidak ada pengiriman ganda.</p>
+  <form action="/admin/orders/{{$o.Number}}/shipment/book" method="post"><button class="btn btn--primary btn--sm" type="submit">{{icon "truck"}} Coba Lagi</button></form>
+  {{else}}
+  <p>Pengiriman <strong>{{$s.Courier}} {{$s.Service}}</strong>: <span class="ship-status ship-status--{{$s.Status}}">{{$s.Status.Label}}</span>{{with $s.Tracking}} · resi <strong>{{.}}</strong>{{end}}</p>
+  {{end}}
+  <div class="adm-actions">
+    {{if $s.CanSync}}<form action="/admin/orders/{{$o.Number}}/shipment/sync" method="post"><button class="btn btn--sm btn--outline" type="submit">Perbarui Status</button></form>{{end}}
+  </div>
+  {{if $s.CanCancel}}
+  <details class="adm-danger-zone">
+    <summary>Batalkan pengiriman</summary>
+    <form class="adm-form" action="/admin/orders/{{$o.Number}}/shipment/cancel" method="post">
+      <p class="muted">{{if eq (print $s.Status) "PENDING"}}Permintaan ditandai gagal (penyedia belum menjawab).{{else}}Penjemputan dibatalkan di penyedia.{{end}} Pesanan tetap diproses: buat pengiriman lagi atau kirim manual.</p>
+      <div class="field">
+        <label class="field__label" for="ship-cancel-reason">Alasan</label>
+        <input class="input" id="ship-cancel-reason" name="reason" maxlength="200" placeholder="mis. salah kurir">
+      </div>
+      <button class="btn btn--danger btn--sm" type="submit">Batalkan Pengiriman</button>
+    </form>
+  </details>
+  {{end}}
+</div>
 {{end}}

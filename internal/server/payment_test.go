@@ -32,17 +32,18 @@ func newPaymentApp(t *testing.T) (string, *pgxpool.Pool, *midtranstest.Server) {
 	return srv.URL, db, fake
 }
 
-// buyNow places a Buy Now order of one ASH-BLK-M (Rp129.000) and returns
-// its number.
+// buyNow places a Buy Now order of one ASH-BLK-M (Rp129.000 + Rp9.000
+// shipping) and returns its number.
 func buyNow(t *testing.T, b *browser, db *pgxpool.Pool) string {
 	t.Helper()
 	v := queryID(t, db, "SELECT id FROM product_variants WHERE sku = 'ASH-BLK-M'")
 	page := b.get(fmt.Sprintf("/checkout?variant_id=%d&quantity=1", v))
 	res := b.post("/checkout/order", url.Values{
 		"variant_id": {fmt.Sprint(v)}, "quantity": {"1"},
-		"address_id":     {hiddenValue(t, page.body, "address_id")},
-		"expected_total": {hiddenValue(t, page.body, "expected_total")},
-		"key":            {hiddenValue(t, page.body, "key")},
+		"address_id":        {hiddenValue(t, page.body, "address_id")},
+		"shipping_quote_id": {hiddenValue(t, page.body, "shipping_quote_id")},
+		"expected_total":    {hiddenValue(t, page.body, "expected_total")},
+		"key":               {hiddenValue(t, page.body, "key")},
 	})
 	m := successPath.FindStringSubmatch(res.location)
 	if m == nil {
@@ -75,7 +76,7 @@ func TestPaymentFlow(t *testing.T) {
 	expect(t, b.get("/checkout/success/"+number), http.StatusOK, "Bayar Sekarang", "Midtrans Sandbox", "Selesaikan pembayaran sebelum")
 	detail := b.get(detailPath)
 	expect(t, detail, http.StatusOK, "Belum Bayar", "Bayar Sekarang", "Batas Pembayaran", "Belum ada pembayaran",
-		"Batalkan Pesanan", "Mode uji", "Total belum termasuk ongkos kirim")
+		"Batalkan Pesanan", "Mode uji", "JNE Reguler", "Rp138.000")
 	if csp := detail.header.Get("Content-Security-Policy"); !strings.HasSuffix(csp, "form-action 'self' "+fake.URL) ||
 		!strings.Contains(csp, "script-src 'self';") || !strings.Contains(csp, "connect-src 'self';") {
 		t.Errorf("CSP must only add the checkout origin to form-action: %q", csp)
@@ -90,7 +91,7 @@ func TestPaymentFlow(t *testing.T) {
 		t.Errorf("double click: %q, snap calls %d", again.location, fake.Count("POST /snap"))
 	}
 	td := fake.SnapRequest(p1)["transaction_details"].(map[string]any)
-	if td["gross_amount"] != float64(129000) || fake.BadAuth() != 0 {
+	if td["gross_amount"] != float64(129000+9000) || fake.BadAuth() != 0 {
 		t.Errorf("snap amount %v, bad auth %d", td["gross_amount"], fake.BadAuth())
 	}
 
@@ -102,7 +103,7 @@ func TestPaymentFlow(t *testing.T) {
 	}
 
 	// A forged notification is rejected and changes nothing.
-	fake.SetStatus(p1, "settlement", "bank_transfer", 129000)
+	fake.SetStatus(p1, "settlement", "bank_transfer", 129000+9000)
 	var forged map[string]any
 	json.Unmarshal(fake.Notification(p1), &forged)
 	forged["signature_key"] = strings.Repeat("a", 128)
@@ -147,13 +148,13 @@ func TestPaymentFinishSyncsWithoutWebhook(t *testing.T) {
 
 	// The notification never arrives (e.g. local development): the finish
 	// page asks Midtrans and applies what Midtrans says.
-	fake.SetStatus(number+"-P1", "expire", "bank_transfer", 129000)
+	fake.SetStatus(number+"-P1", "expire", "bank_transfer", 129000+9000)
 	expect(t, b.get("/account/orders/"+number+"/payment/finish"), http.StatusOK, "Pembayaran Belum Berhasil", "Silakan coba kembali", "Bayar Lagi")
 	pay := b.post("/account/orders/"+number+"/pay", nil)
 	if pay.location != fake.URL+"/snap/v4/redirection/tok-"+number+"-P2" {
 		t.Errorf("pay again must open attempt 2: %q", pay.location)
 	}
-	fake.SetStatus(number+"-P2", "settlement", "qris", 129000)
+	fake.SetStatus(number+"-P2", "settlement", "qris", 129000+9000)
 	expect(t, b.get("/account/orders/"+number+"/payment/finish"), http.StatusOK, "Pembayaran Berhasil", "QRIS")
 }
 

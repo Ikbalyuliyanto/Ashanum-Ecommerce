@@ -17,6 +17,7 @@ import (
 	"ecommerce/internal/checkout"
 	"ecommerce/internal/product"
 	"ecommerce/internal/returns"
+	"ecommerce/internal/shipping/shippingtest"
 	"ecommerce/internal/testutil"
 	"ecommerce/internal/validate"
 )
@@ -36,8 +37,8 @@ func newFixture(t *testing.T) *fixture {
 	db := testutil.DB(t)
 	f := &fixture{t: t, ctx: context.Background(), db: db,
 		svc:   returns.NewService(returns.NewRepository(db), returns.Options{WindowDays: 7}),
-		carts: cart.NewService(cart.NewRepository(db)), addrs: address.NewService(address.NewRepository(db))}
-	f.checkout = checkout.NewService(checkout.NewRepository(db), f.addrs)
+		carts: cart.NewService(cart.NewRepository(db)), addrs: address.NewService(address.NewRepository(db), shippingtest.For(t, db).Service)}
+	f.checkout = checkout.NewService(checkout.NewRepository(db), f.addrs, shippingtest.For(t, db).Service)
 	c, err := category.NewService(category.NewRepository(db)).Create(f.ctx, category.Input{Name: "Atasan", Active: true})
 	if err != nil {
 		t.Fatal(err)
@@ -48,7 +49,7 @@ func newFixture(t *testing.T) *fixture {
 
 func (f *fixture) product(name, sku string, price int64, stock int) int64 {
 	f.t.Helper()
-	if _, err := product.NewService(product.NewRepository(f.db)).Create(f.ctx, product.Input{
+	if _, err := product.NewService(product.NewRepository(f.db)).Create(f.ctx, product.Input{WeightGrams: 100,
 		CategoryID: f.catID, Name: name, Active: true,
 		Images:   []product.ImageInput{{URL: "data:image/svg+xml;base64,PHN2Zy8+"}},
 		Variants: []product.VariantInput{{SKU: sku, Price: price, Stock: stock}},
@@ -61,7 +62,7 @@ func (f *fixture) product(name, sku string, price int64, stock int) int64 {
 func (f *fixture) user(email string) (userID, addressID int64) {
 	f.t.Helper()
 	userID = testutil.CreateUser(f.t, f.db, email)
-	a, err := f.addrs.Create(f.ctx, userID, address.Input{
+	a, err := f.addrs.Create(f.ctx, userID, address.Input{ShippingAreaID: shippingtest.For(f.t, f.db).AreaID(f.t),
 		Label: "Rumah", RecipientName: "Budi Santoso", Phone: "081234567890",
 		Province: "Jawa Barat", City: "Kota Bandung", District: "Coblong", Village: "Dago",
 		PostalCode: "40135", StreetAddress: "Jl. Ir. H. Juanda No. 100",
@@ -87,7 +88,7 @@ func (f *fixture) order(userID, addressID int64, lines ...line) string {
 		}
 		ids = append(ids, f.int("SELECT ci.id FROM cart_items ci JOIN carts c ON c.id = ci.cart_id WHERE c.user_id = $1 AND ci.variant_id = $2", userID, l.variant))
 	}
-	placed, err := f.checkout.PlaceOrder(f.ctx, userID, checkout.PlaceRequest{Source: checkout.Source{CartItemIDs: ids}, AddressID: addressID})
+	placed, err := f.checkout.PlaceOrder(f.ctx, userID, quoted(f.t, f.checkout, userID, checkout.PlaceRequest{Source: checkout.Source{CartItemIDs: ids}, AddressID: addressID}))
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -616,4 +617,15 @@ func mustNumber(t *testing.T, f *fixture, id int64) string {
 		t.Fatal(err)
 	}
 	return n
+}
+
+// quoted adds the cheapest shipping quote for the request, as the checkout
+// page does before the buyer presses "Buat Pesanan".
+func quoted(t testing.TB, co *checkout.Service, userID int64, req checkout.PlaceRequest) checkout.PlaceRequest {
+	t.Helper()
+	d, err := co.Prepare(context.Background(), userID, req.Source, req.AddressID, "")
+	if err == nil && d.Shipping.Selected != nil {
+		req.ShippingQuoteID = d.Shipping.Selected.ID
+	}
+	return req
 }

@@ -34,6 +34,7 @@ import (
 	"ecommerce/internal/product"
 	"ecommerce/internal/returns"
 	"ecommerce/internal/review"
+	"ecommerce/internal/shipping"
 	"ecommerce/internal/user"
 )
 
@@ -50,6 +51,7 @@ type Deps struct {
 	Payments   *payment.Service
 	Reviews    *review.Service
 	Returns    *returns.Service
+	Shipping   *shipping.Service
 	// CORSOrigins are exact browser origins allowed to call the API.
 	CORSOrigins []string
 }
@@ -104,6 +106,9 @@ func (h *Handler) Routes(r chi.Router) {
 		r.Delete("/cart/items/{id}", h.deleteCartItem)
 		r.Delete("/cart", h.clearCart)
 
+		// Area search and rates call the shipping provider: rate limited.
+		r.With(middleware.RateLimit(60, time.Minute, tooMany)).Get("/shipping/areas", h.shippingAreas)
+		r.With(middleware.RateLimit(60, time.Minute, tooMany)).Post("/shipping/rates", h.shippingRates)
 		r.Post("/checkout/preview", h.checkoutPreview)
 		r.Post("/orders", h.createOrder)
 		r.Get("/orders", h.orders)
@@ -111,6 +116,7 @@ func (h *Handler) Routes(r chi.Router) {
 		r.Post("/orders/{number}/cancel", h.cancelOrder)
 		r.Post("/orders/{number}/payment", h.startPayment)
 		r.Get("/orders/{number}/payment", h.paymentStatus)
+		r.Get("/orders/{number}/tracking", h.orderTracking)
 
 		r.Get("/me/reviews", h.myReviews)
 		r.Post("/reviews", h.createReview)

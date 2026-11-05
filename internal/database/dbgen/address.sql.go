@@ -34,30 +34,35 @@ const createAddress = `-- name: CreateAddress :one
 INSERT INTO user_addresses (
     user_id, label, recipient_name, phone,
     province, city, district, village, postal_code, street_address,
-    latitude, longitude, maps_url, is_primary
+    latitude, longitude, maps_url, is_primary,
+    shipping_area_provider, shipping_area_id, shipping_area_label
 ) VALUES (
     $1, $2, $3, $4,
     $5, $6, $7, $8, $9, $10,
-    $11, $12, $13, $14
+    $11, $12, $13, $14,
+    $15, $16, $17
 )
-RETURNING id, user_id, label, recipient_name, phone, province, city, district, village, postal_code, street_address, latitude, longitude, maps_url, is_primary, created_at, updated_at
+RETURNING id, user_id, label, recipient_name, phone, province, city, district, village, postal_code, street_address, latitude, longitude, maps_url, is_primary, created_at, updated_at, shipping_area_provider, shipping_area_id, shipping_area_label
 `
 
 type CreateAddressParams struct {
-	UserID        int64
-	Label         string
-	RecipientName string
-	Phone         string
-	Province      string
-	City          string
-	District      string
-	Village       string
-	PostalCode    string
-	StreetAddress string
-	Latitude      *float64
-	Longitude     *float64
-	MapsUrl       *string
-	IsPrimary     bool
+	UserID               int64
+	Label                string
+	RecipientName        string
+	Phone                string
+	Province             string
+	City                 string
+	District             string
+	Village              string
+	PostalCode           string
+	StreetAddress        string
+	Latitude             *float64
+	Longitude            *float64
+	MapsUrl              *string
+	IsPrimary            bool
+	ShippingAreaProvider *string
+	ShippingAreaID       *string
+	ShippingAreaLabel    *string
 }
 
 func (q *Queries) CreateAddress(ctx context.Context, arg CreateAddressParams) (UserAddress, error) {
@@ -76,6 +81,9 @@ func (q *Queries) CreateAddress(ctx context.Context, arg CreateAddressParams) (U
 		arg.Longitude,
 		arg.MapsUrl,
 		arg.IsPrimary,
+		arg.ShippingAreaProvider,
+		arg.ShippingAreaID,
+		arg.ShippingAreaLabel,
 	)
 	var i UserAddress
 	err := row.Scan(
@@ -96,6 +104,9 @@ func (q *Queries) CreateAddress(ctx context.Context, arg CreateAddressParams) (U
 		&i.IsPrimary,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ShippingAreaProvider,
+		&i.ShippingAreaID,
+		&i.ShippingAreaLabel,
 	)
 	return i, err
 }
@@ -119,7 +130,7 @@ func (q *Queries) DeleteAddress(ctx context.Context, arg DeleteAddressParams) (b
 }
 
 const getAddress = `-- name: GetAddress :one
-SELECT id, user_id, label, recipient_name, phone, province, city, district, village, postal_code, street_address, latitude, longitude, maps_url, is_primary, created_at, updated_at FROM user_addresses
+SELECT id, user_id, label, recipient_name, phone, province, city, district, village, postal_code, street_address, latitude, longitude, maps_url, is_primary, created_at, updated_at, shipping_area_provider, shipping_area_id, shipping_area_label FROM user_addresses
 WHERE id = $1 AND user_id = $2
 `
 
@@ -149,13 +160,16 @@ func (q *Queries) GetAddress(ctx context.Context, arg GetAddressParams) (UserAdd
 		&i.IsPrimary,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ShippingAreaProvider,
+		&i.ShippingAreaID,
+		&i.ShippingAreaLabel,
 	)
 	return i, err
 }
 
 const listAddresses = `-- name: ListAddresses :many
 
-SELECT id, user_id, label, recipient_name, phone, province, city, district, village, postal_code, street_address, latitude, longitude, maps_url, is_primary, created_at, updated_at FROM user_addresses
+SELECT id, user_id, label, recipient_name, phone, province, city, district, village, postal_code, street_address, latitude, longitude, maps_url, is_primary, created_at, updated_at, shipping_area_provider, shipping_area_id, shipping_area_label FROM user_addresses
 WHERE user_id = $1
 ORDER BY is_primary DESC, id DESC
 `
@@ -189,6 +203,9 @@ func (q *Queries) ListAddresses(ctx context.Context, userID int64) ([]UserAddres
 			&i.IsPrimary,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ShippingAreaProvider,
+			&i.ShippingAreaID,
+			&i.ShippingAreaLabel,
 		); err != nil {
 			return nil, err
 		}
@@ -260,27 +277,33 @@ SET label          = $1,
     latitude       = $10,
     longitude      = $11,
     maps_url       = $12,
-    is_primary     = $13
-WHERE id = $14 AND user_id = $15
-RETURNING id, user_id, label, recipient_name, phone, province, city, district, village, postal_code, street_address, latitude, longitude, maps_url, is_primary, created_at, updated_at
+    is_primary     = $13,
+    shipping_area_provider = $14,
+    shipping_area_id       = $15,
+    shipping_area_label    = $16
+WHERE id = $17 AND user_id = $18
+RETURNING id, user_id, label, recipient_name, phone, province, city, district, village, postal_code, street_address, latitude, longitude, maps_url, is_primary, created_at, updated_at, shipping_area_provider, shipping_area_id, shipping_area_label
 `
 
 type UpdateAddressParams struct {
-	Label         string
-	RecipientName string
-	Phone         string
-	Province      string
-	City          string
-	District      string
-	Village       string
-	PostalCode    string
-	StreetAddress string
-	Latitude      *float64
-	Longitude     *float64
-	MapsUrl       *string
-	IsPrimary     bool
-	ID            int64
-	UserID        int64
+	Label                string
+	RecipientName        string
+	Phone                string
+	Province             string
+	City                 string
+	District             string
+	Village              string
+	PostalCode           string
+	StreetAddress        string
+	Latitude             *float64
+	Longitude            *float64
+	MapsUrl              *string
+	IsPrimary            bool
+	ShippingAreaProvider *string
+	ShippingAreaID       *string
+	ShippingAreaLabel    *string
+	ID                   int64
+	UserID               int64
 }
 
 func (q *Queries) UpdateAddress(ctx context.Context, arg UpdateAddressParams) (UserAddress, error) {
@@ -298,6 +321,9 @@ func (q *Queries) UpdateAddress(ctx context.Context, arg UpdateAddressParams) (U
 		arg.Longitude,
 		arg.MapsUrl,
 		arg.IsPrimary,
+		arg.ShippingAreaProvider,
+		arg.ShippingAreaID,
+		arg.ShippingAreaLabel,
 		arg.ID,
 		arg.UserID,
 	)
@@ -320,6 +346,9 @@ func (q *Queries) UpdateAddress(ctx context.Context, arg UpdateAddressParams) (U
 		&i.IsPrimary,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ShippingAreaProvider,
+		&i.ShippingAreaID,
+		&i.ShippingAreaLabel,
 	)
 	return i, err
 }

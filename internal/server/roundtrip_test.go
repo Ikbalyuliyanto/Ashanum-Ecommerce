@@ -96,3 +96,72 @@ func TestAPIRoundTrips(t *testing.T) {
 		}
 	}
 }
+
+// TestShippingRoundTrips pins the round trips Phase 10 added: the checkout
+// page computes shipping quotes (rates from the provider or the in-memory
+// cache, then one statement storing the quotes), placing the order locks
+// the quote, and a tracking page reads stored events (never the provider).
+func TestShippingRoundTrips(t *testing.T) {
+	db, counter := testutil.CountingDB(t)
+	srv := httptest.NewServer(buildRouter(t, db, config.EnvDevelopment))
+	t.Cleanup(srv.Close)
+	seedCatalog(t, db)
+	fake := shipFor(t, db).Fake
+	b := newBrowser(t, srv.URL)
+	b.register("siti@example.com")
+	b.addAddress()
+	v := queryID(t, db, "SELECT id FROM product_variants WHERE sku = 'ASH-BLK-M'")
+	checkoutPath := fmt.Sprintf("/checkout?variant_id=%d&quantity=1", v)
+
+	b.get(checkoutPath) // warm: rates cached
+	calls := fake.Calls("POST /v1/rates")
+	counter.Reset()
+	page := b.get(checkoutPath)
+	checkoutQueries := counter.Count()
+	if fake.Calls("POST /v1/rates") != calls {
+		t.Error("a repeated checkout page must use cached rates")
+	}
+
+	counter.Reset()
+	res := b.post("/checkout/order", url.Values{"variant_id": {fmt.Sprint(v)}, "quantity": {"1"},
+		"address_id": {hiddenValue(t, page.body, "address_id")}, "shipping_quote_id": {hiddenValue(t, page.body, "shipping_quote_id")},
+		"expected_total": {hiddenValue(t, page.body, "expected_total")}, "key": {hiddenValue(t, page.body, "key")}})
+	placeQueries := counter.Count()
+	m := successPath.FindStringSubmatch(res.location)
+	if m == nil {
+		t.Fatalf("order: %d %q", res.status, res.location)
+	}
+	number := m[1]
+	testutil.PayOrder(t, db, number)
+	admin := newAdmin(t, srv.URL, db)
+	admin.post("/admin/orders/"+number+"/confirm", nil)
+	admin.post("/admin/orders/"+number+"/shipment/book", nil)
+	id := queryString(t, db, "SELECT provider_shipment_id FROM shipments")
+	fake.Advance(id, "picked", "Paket dijemput kurir.", time.Now())
+	admin.post("/admin/orders/"+number+"/shipment/sync", nil)
+
+	b.get("/account/orders/" + number)
+	providerCalls := fake.Calls("")
+	counter.Reset()
+	expect(t, b.get("/account/orders/"+number), http.StatusOK, "Dijemput Kurir")
+	trackingQueries := counter.Count()
+	if fake.Calls("") != providerCalls {
+		t.Error("the tracking page must not call the provider")
+	}
+
+	const signedIn = 2 // session + cart badge
+	t.Logf("checkout page %d, place order %d, tracking page %d queries", checkoutQueries, placeQueries, trackingQueries)
+	for name, got := range map[string][2]int64{
+		// buy-now check, lines, addresses, quotes upsert (rates from memory)
+		"checkout page": {checkoutQueries, signedIn + 4},
+		// session, idempotency lookup, begin, lines, address, quote lock,
+		// create (order + items + stock + cart + quote use), commit
+		"place order": {placeQueries, 8},
+		// order + shipment, items, tracking events, payment attempts
+		"order detail with tracking": {trackingQueries, signedIn + 4},
+	} {
+		if got[0] != got[1] {
+			t.Errorf("%s: %d queries, want %d", name, got[0], got[1])
+		}
+	}
+}

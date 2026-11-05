@@ -20,7 +20,7 @@ func TestManualAdjustment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := product.NewService(product.NewRepository(db)).Create(ctx, product.Input{CategoryID: c.ID, Name: "Kaos", Active: true,
+	if _, err := product.NewService(product.NewRepository(db)).Create(ctx, product.Input{WeightGrams: 100, CategoryID: c.ID, Name: "Kaos", Active: true,
 		Variants: []product.VariantInput{{SKU: "K-1", Price: 50000, Stock: 5}}}); err != nil {
 		t.Fatal(err)
 	}

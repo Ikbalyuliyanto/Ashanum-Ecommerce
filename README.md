@@ -20,7 +20,8 @@ dilakukan per fase.
 | 7 | Ulasan & rating, pengajuan pengembalian (refund/tukar barang), bukti (URL), status retur, fondasi domain refund | Selesai |
 | 8 | Admin (role & otorisasi), dashboard, produk/kategori/varian/stok, fulfillment pesanan, retur & refund (administratif), moderasi ulasan, laporan, audit log | Selesai |
 | 9 | REST API v1 untuk mobile: access + refresh token (rotasi), akun, alamat, katalog, keranjang, checkout, pesanan, pembayaran, ulasan, retur, dokumentasi | Selesai |
-| 10+ | Security review, load testing, deployment HG680P, integrasi pengiriman, Midtrans produksi (belum dijadwalkan) | Belum |
+| 10 | Pengiriman: provider abstraction + Biteship (mode testing), area alamat, berat produk, quote ongkir di checkout, snapshot pesanan, booking idempoten, tracking, webhook, reconcile-shipments | Selesai |
+| 11+ | Security review, load testing, deployment HG680P, Midtrans produksi (belum dijadwalkan) | Belum |
 
 ## Stack
 
@@ -53,6 +54,7 @@ semuanya dibaca dari binary (embed).
 | `ecommerce recalculate-ratings` | Perbaiki cache rating produk dari `product_reviews` (alat perbaikan) |
 | `ecommerce reconcile-payments [-limit N]` | Sinkronkan pembayaran pending dengan Midtrans, batalkan pesanan lewat batas bayar (stok kembali), daftar pembayaran yang perlu ditinjau |
 | `ecommerce cleanup-api-sessions` | Hapus sesi API (mobile) yang kedaluwarsa/dicabut; untuk cron/systemd timer |
+| `ecommerce reconcile-shipments [-limit N]` | Sinkron status pengiriman dari penyedia, laporkan booking tanpa jawaban, hapus quote kedaluwarsa; untuk cron/systemd timer |
 | `ecommerce version` | Versi build |
 
 `Makefile` menyediakan pintasan (`make run`, `make test`, `make build-arm64`, ...).
@@ -119,15 +121,15 @@ login lalu kembali ke produk dengan varian dan jumlah yang sama.
 | `GET /account/orders/{nomor}` | Rincian pesanan |
 
 Semua wajib login; pesanan dan item keranjang hanya bisa diakses pemiliknya.
-Pengiriman, voucher, dan pembayaran tampil sebagai "belum tersedia": ongkos kirim
-"Belum dihitung", total belum termasuk ongkir, pesanan dibuat berstatus Belum Bayar.
+Sejak Fase 10 checkout menampilkan pilihan kurir dan total sudah termasuk ongkir (lihat
+Pengiriman); voucher masih "belum tersedia"; pesanan dibuat berstatus Belum Bayar.
 
 ### Pembayaran (Fase 6)
 
-> **Sandbox saja.** `shipping_cost` masih 0 sehingga total pesanan belum termasuk ongkos
-> kirim. `MIDTRANS_ENV` selain `sandbox` ditolak saat startup. Pembayaran produksi baru
-> boleh diaktifkan setelah integrasi pengiriman, validasi total final, dan review
-> pembayaran produksi selesai.
+> **Sandbox saja.** `MIDTRANS_ENV` selain `sandbox` ditolak saat startup. Sejak Fase 10
+> `orders.total` sudah termasuk ongkos kirim (baris "Ongkos Kirim" di `item_details`), tetapi
+> pembayaran produksi baru boleh diaktifkan setelah Midtrans Sandbox asli dan Biteship
+> diuji end-to-end serta review pembayaran produksi selesai.
 
 | Route | Keterangan |
 |-------|------------|
@@ -170,6 +172,32 @@ langkah retur setelah pengajuan juga dikerjakan admin.
 
 Batas pengajuan pengembalian: `RETURN_WINDOW_DAYS` (default 7) hari setelah
 `orders.completed_at` — kebijakan bisnis yang bisa diubah, bukan aturan tetap.
+
+### Pengiriman (Fase 10)
+
+Detail: [docs/shipping.md](docs/shipping.md). Ongkir dihitung dari penyedia (Biteship,
+**mode testing**; `BITESHIP_ENV=live` ditolak kecuali `SHIPPING_LIVE_ENABLED=true`),
+dipilih pembeli saat checkout, dan masuk ke `orders.total` yang ditagih Midtrans.
+
+- Alamat menyimpan area pengiriman dari pencarian area (`shipping_area_id`, netral
+  penyedia). Produk aktif wajib punya berat (gram); varian boleh menimpa.
+- Checkout menampilkan opsi kurir sebagai *quote* yang disimpan server (kedaluwarsa,
+  terikat pembeli/alamat/paket); pesanan hanya menerima id quote → snapshot pengiriman.
+  Penyedia mati → "Pengiriman sementara tidak dapat dihitung" (tidak pernah ongkir 0).
+- Admin: "Buat Pengiriman" untuk pesanan dibayar & diproses (idempoten, aman diklik ulang),
+  "Perbarui Status", "Batalkan pengiriman", dan kirim manual sebagai cadangan.
+- Tracking dari `POST /webhooks/shipping/biteship` (header rahasia), admin, atau
+  `reconcile-shipments`; halaman pesanan dan `GET /api/v1/orders/{n}/tracking` membaca
+  database saja.
+
+| Variabel | Default | Keterangan |
+|---|---|---|
+| `BITESHIP_API_KEY` | kosong | Kosong = ongkir tidak bisa dihitung, pesanan tidak bisa dibuat |
+| `BITESHIP_ENV` / `SHIPPING_LIVE_ENABLED` | `test` / `false` | Live hanya bila keduanya diset |
+| `BITESHIP_WEBHOOK_HEADER` / `BITESHIP_WEBHOOK_SECRET` | `X-Ashanum-Webhook-Secret` / kosong | Autentikasi webhook |
+| `SHIP_FROM_*` | kosong | Alamat toko (nama, telepon, alamat, kode pos; area & koordinat opsional) |
+| `SHIPPING_COURIERS` | `jne,sicepat,jnt,anteraja,pos` | Kurir yang ditawarkan |
+| `SHIPPING_RATE_CACHE_TTL` / `SHIPPING_QUOTE_TTL` | `10m` / `30m` | Cache tarif / umur quote |
 
 ### REST API untuk mobile (Fase 9)
 
@@ -214,7 +242,8 @@ same-origin (CSRF). Respons `Cache-Control: private, no-store` dan `X-Robots-Tag
 |-------|------------|
 | `GET /admin` | Dashboard operasional (angka langsung dari DB) |
 | `GET /admin/orders?status=&q=&page=` · `GET /admin/orders/{nomor}` | Daftar (cari nomor pesanan) & rincian |
-| `POST /admin/orders/{nomor}/confirm` · `/ship` · `/complete` · `/cancel` | WAITING_CONFIRMATION → PROCESSING → SHIPPED → COMPLETED; batal |
+| `POST /admin/orders/{nomor}/confirm` · `/ship` · `/complete` · `/cancel` | WAITING_CONFIRMATION → PROCESSING → SHIPPED → COMPLETED; batal (`/ship` = kirim manual) |
+| `POST /admin/orders/{nomor}/shipment/book` · `/shipment/sync` · `/shipment/cancel` | Buat pengiriman di penyedia (idempoten), perbarui status, batalkan sebelum dijemput |
 | `GET /admin/products` · `/products/new` · `POST /admin/products` | Daftar (cari nama/SKU), tambah produk (varian dibuat dari kombinasi atribut) |
 | `GET /admin/products/{id}/edit` · `POST /admin/products/{id}` | Ubah info & gambar |
 | `POST /admin/products/{id}/activate` · `/deactivate` | Tampil/sembunyikan (tidak ada hapus) |
@@ -295,13 +324,15 @@ internal/inventory/          penyesuaian stok + jejak inventory_adjustments
 internal/report/             dashboard & laporan (SQL agregat)
 internal/audit/              admin audit log (append-only)
 internal/api/                REST API /api/v1 (JSON, Bearer token) di atas service yang sama
+internal/shipping/           ongkir, quote, booking, tracking, webhook (provider-neutral)
+internal/shipping/biteship/  adapter Biteship (net/http) + biteshiptest (tiruan untuk tes)
 internal/validate/           aturan validasi input bersama (email, HP, nama, password)
 internal/database/dbgen/     kode hasil sqlc (jangan diedit manual)
 internal/testutil/           schema PostgreSQL terisolasi untuk test
 web/templates/               layouts/, partials/, <modul>/, errors/
 web/static/                  css/, js/, icons/, img/ (placeholder)
 scripts/seeddemo/            pengisi data demo untuk development
-docs/                        blueprint, rencana kode wilayah alamat, api-v1.md, openapi.yaml, mobile-flow.md
+docs/                        blueprint, rencana kode wilayah alamat, api-v1.md, openapi.yaml, mobile-flow.md, shipping.md
 deploy/nginx/                konfigurasi Nginx + real IP Cloudflare
 deploy/systemd/              unit systemd
 ```
@@ -401,15 +432,15 @@ mengembalikan pesanan yang sama. Order menyimpan **snapshot** alamat dan setiap 
 alamat diubah/dihapus. Nomor pesanan `ASH-YYYYMMDD-NNNNNN` (tanggal WIB + sequence
 PostgreSQL; unik dan aman konkurensi, bukan primary key). Stok dikurangi saat pesanan
 dibuat dan dikembalikan saat pesanan belum bayar dibatalkan atau lewat batas bayar (lihat
-Pembayaran). Pengiriman akan berupa tabel `shipments` (kurir, layanan, ongkir, resi,
-estimasi) yang merujuk `orders.id`.
+Pembayaran). Ongkir dan pilihan kurir disalin dari quote ke snapshot pesanan (Fase 10,
+lihat [docs/shipping.md](docs/shipping.md)); pengirimannya ada di tabel `shipments`.
 
 **Pembayaran.** Midtrans Snap mode **redirect**: "Bayar Sekarang" → 303 ke halaman
 pembayaran Midtrans, jadi tidak ada script Midtrans di halaman kita dan client key tidak
 dipakai. Satu pesanan boleh punya beberapa *attempt* (`payments`), tetapi paling banyak
 satu `PENDING` dan satu `PAID` (partial unique index); tiap attempt punya
 `provider_order_id` sendiri `ASH-YYYYMMDD-NNNNNN-P<n>` yang tidak pernah dipakai ulang.
-Nominal selalu `orders.total` (ongkir/diskon kelak masuk ke order lebih dulu). Klik ganda
+Nominal selalu `orders.total` (barang + ongkir − diskon; layanan pembayaran tidak menghitung ongkir). Klik ganda
 memakai attempt pending yang sama (mutex per pesanan + constraint database). Sumber
 kebenaran adalah Midtrans, bukan browser: webhook diterima hanya dengan signature
 `SHA512(order_id + status_code + gross_amount + server key)` yang valid, lalu statusnya
@@ -501,8 +532,8 @@ Midtrans**: dana dikembalikan di luar sistem dan hasilnya dicatat.
 **Fulfillment pesanan.** `WAITING_PAYMENT` hanya berpindah lewat pembayaran yang
 dikonfirmasi Midtrans (Fase 6); admin tidak bisa menandai lunas, dan CHECK
 `orders_paid_status_chk` menolak PROCESSING/SHIPPED/COMPLETED tanpa `paid_at`. Admin:
-`WAITING_CONFIRMATION → PROCESSING` (konfirmasi) → `SHIPPED` (kurir, layanan, resi diisi
-manual ke tabel `shipments`; tidak ada API kurir dan bukan pelacakan realtime) →
+`WAITING_CONFIRMATION → PROCESSING` (konfirmasi) → `SHIPPED` (pengiriman dibooking di penyedia
+dan dijemput kurir — Fase 10 — atau kurir, layanan, resi diisi manual sebagai cadangan) →
 `COMPLETED` (`completed_at` di transaksi yang sama: ulasan & retur terbuka). Tidak ada
 lompatan status. Pembatalan admin: pesanan belum bayar mengikuti aturan Fase 6 (transaksi
 Midtrans dibatalkan dulu); pesanan berbayar yang belum dikirim → stok kembali sekali

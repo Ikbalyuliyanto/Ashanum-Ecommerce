@@ -18,6 +18,7 @@ import (
 	"ecommerce/internal/product"
 	"ecommerce/internal/returns"
 	"ecommerce/internal/review"
+	"ecommerce/internal/shipping/shippingtest"
 	"ecommerce/internal/testutil"
 	"ecommerce/internal/validate"
 )
@@ -39,13 +40,13 @@ func newFixture(t *testing.T) *fixture {
 	ctx := context.Background()
 	pay := payment.NewService(payment.NewRepository(db), nil, payment.Options{Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	f := &fixture{t: t, ctx: ctx, db: db, svc: fulfillment.NewService(db, pay)}
-	addrs := address.NewService(address.NewRepository(db))
-	f.checkout = checkout.NewService(checkout.NewRepository(db), addrs)
+	addrs := address.NewService(address.NewRepository(db), shippingtest.For(t, db).Service)
+	f.checkout = checkout.NewService(checkout.NewRepository(db), addrs, shippingtest.For(t, db).Service)
 	c, err := category.NewService(category.NewRepository(db)).Create(ctx, category.Input{Name: "Atasan", Active: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := product.NewService(product.NewRepository(db)).Create(ctx, product.Input{
+	if _, err := product.NewService(product.NewRepository(db)).Create(ctx, product.Input{WeightGrams: 100,
 		CategoryID: c.ID, Name: "Kaos Basic", Active: true,
 		Images:   []product.ImageInput{{URL: "data:image/svg+xml;base64,PHN2Zy8+"}},
 		Variants: []product.VariantInput{{SKU: "KB-1", Price: 100000, Stock: 10}},
@@ -55,7 +56,7 @@ func newFixture(t *testing.T) *fixture {
 	f.variant = f.int("SELECT id FROM product_variants WHERE sku = 'KB-1'")
 	f.admin = testutil.CreateAdmin(t, db, "admin@example.com")
 	f.buyer = testutil.CreateUser(t, db, "budi@example.com")
-	a, err := addrs.Create(ctx, f.buyer, address.Input{Label: "Rumah", RecipientName: "Budi Santoso", Phone: "081234567890",
+	a, err := addrs.Create(ctx, f.buyer, address.Input{ShippingAreaID: shippingtest.For(t, db).AreaID(t), Label: "Rumah", RecipientName: "Budi Santoso", Phone: "081234567890",
 		Province: "Jawa Barat", City: "Kota Bandung", District: "Coblong", Village: "Dago", PostalCode: "40135",
 		StreetAddress: "Jl. Ir. H. Juanda No. 100"})
 	if err != nil {
@@ -68,8 +69,8 @@ func newFixture(t *testing.T) *fixture {
 // order places a buy-now order of qty units (stock is taken at checkout).
 func (f *fixture) order(qty int) string {
 	f.t.Helper()
-	placed, err := f.checkout.PlaceOrder(f.ctx, f.buyer, checkout.PlaceRequest{
-		Source: checkout.Source{VariantID: f.variant, Quantity: qty}, AddressID: f.address})
+	placed, err := f.checkout.PlaceOrder(f.ctx, f.buyer, quoted(f.t, f.checkout, f.buyer, checkout.PlaceRequest{
+		Source: checkout.Source{VariantID: f.variant, Quantity: qty}, AddressID: f.address}))
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -204,7 +205,7 @@ func TestCancelPaidOrderRecordsRefundAndRestoresStockOnce(t *testing.T) {
 	if got := f.int("SELECT count(*) FROM orders WHERE order_number = $1 AND cancel_reason = 'ADMIN_CANCELLED' AND stock_restored_at IS NOT NULL", number); got != 1 {
 		t.Error("cancel reason / stock marker")
 	}
-	if got := f.int("SELECT count(*) FROM refunds WHERE source = 'ORDER_CANCELLATION' AND status = 'PENDING' AND amount = 300000 AND return_id IS NULL AND provider IS NULL"); got != 1 {
+	if got := f.int("SELECT count(*) FROM refunds WHERE source = 'ORDER_CANCELLATION' AND status = 'PENDING' AND amount = 309000 AND return_id IS NULL AND provider IS NULL"); got != 1 {
 		t.Errorf("cancellation refunds = %d, want 1", got)
 	}
 	if got := f.int("SELECT count(*) FROM inventory_adjustments WHERE type = 'ORDER_RESTORE' AND quantity_delta = 3 AND stock_before = 7 AND stock_after = 10 AND admin_user_id = $1", f.admin); got != 1 {
@@ -260,4 +261,15 @@ func TestListAndSearch(t *testing.T) {
 	if p.Filter.PageSize != fulfillment.MaxPageSize {
 		t.Errorf("page size cap: %d", p.Filter.PageSize)
 	}
+}
+
+// quoted adds the cheapest shipping quote for the request, as the checkout
+// page does before the buyer presses "Buat Pesanan".
+func quoted(t testing.TB, co *checkout.Service, userID int64, req checkout.PlaceRequest) checkout.PlaceRequest {
+	t.Helper()
+	d, err := co.Prepare(context.Background(), userID, req.Source, req.AddressID, "")
+	if err == nil && d.Shipping.Selected != nil {
+		req.ShippingQuoteID = d.Shipping.Selected.ID
+	}
+	return req
 }

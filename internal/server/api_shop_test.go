@@ -192,7 +192,7 @@ func TestAPICartCheckoutAndOrders(t *testing.T) {
 	// Addresses: ownership enforced.
 	res = a.post("/me/addresses", map[string]any{"label": "Rumah", "recipient_name": "Siti Rahmawati", "phone": "081298765432",
 		"province": "Jawa Barat", "city": "Kota Bandung", "district": "Coblong", "village": "Dago", "postal_code": "40135",
-		"street_address": "Jl. Ir. H. Juanda No. 100", "latitude": -6.89, "longitude": 107.61})
+		"street_address": "Jl. Ir. H. Juanda No. 100", "latitude": -6.89, "longitude": 107.61, "shipping_area_id": a.area("Coblong")})
 	want(t, res, http.StatusCreated, "")
 	addr := num(res.data()["id"])
 	if res.data()["is_primary"] != true || res.data()["phone"] != "+6281298765432" || res.header.Get("Location") == "" {
@@ -201,13 +201,13 @@ func TestAPICartCheckoutAndOrders(t *testing.T) {
 	want(t, a.post("/me/addresses", map[string]any{"label": "X"}), http.StatusUnprocessableEntity, "VALIDATION_ERROR")
 	res = b.post("/me/addresses", map[string]any{"label": "Kantor", "recipient_name": "Budi", "phone": "081234567890",
 		"province": "DKI Jakarta", "city": "Jakarta Selatan", "district": "Setiabudi", "village": "Kuningan", "postal_code": "12950",
-		"street_address": "Jl. Rasuna Said 1"})
+		"street_address": "Jl. Rasuna Said 1", "shipping_area_id": b.area("Cilandak")})
 	bAddr := num(res.data()["id"])
 	want(t, b.call(http.MethodPatch, fmt.Sprintf("/me/addresses/%d", addr), map[string]any{"label": "Curian"}), http.StatusNotFound, "NOT_FOUND")
 	want(t, b.call(http.MethodDelete, fmt.Sprintf("/me/addresses/%d", addr), nil), http.StatusNotFound, "NOT_FOUND")
 	want(t, b.post(fmt.Sprintf("/me/addresses/%d/primary", addr), nil), http.StatusNotFound, "NOT_FOUND")
 	res = a.call(http.MethodPatch, fmt.Sprintf("/me/addresses/%d", addr), map[string]any{"label": "Rumah Utama"})
-	if res.status != http.StatusOK || res.data()["label"] != "Rumah Utama" || res.data()["city"] != "Kota Bandung" {
+	if res.status != http.StatusOK || res.data()["label"] != "Rumah Utama" || res.data()["city"] != "Bandung" || res.data()["shipping_area_label"] == nil {
 		t.Errorf("patch keeps other fields: %s", res.raw)
 	}
 	if l := a.get("/me/addresses").list(); len(l) != 1 {
@@ -218,29 +218,38 @@ func TestAPICartCheckoutAndOrders(t *testing.T) {
 	res = a.post("/checkout/preview", map[string]any{"cart_item_ids": []int64{itemID}})
 	want(t, res, http.StatusOK, "")
 	p := res.data()
-	if p["total"] != float64(258000) || p["ready"] != true || p["address"].(map[string]any)["id"] != float64(addr) {
+	if p["total"] != float64(258000+9000) || p["shipping_cost"] != float64(9000) || p["ready"] != true || p["address"].(map[string]any)["id"] != float64(addr) {
 		t.Errorf("preview: %s", res.raw)
 	}
-	if sh := p["shipping"].(map[string]any); sh["cost"] != float64(0) || sh["status"] != "PENDING_INTEGRATION" {
-		t.Errorf("shipping must not pretend to be free: %v", sh)
+	if sh := p["shipping"].(map[string]any); sh["cost"] != float64(9000) || sh["status"] != "READY" || sh["weight_grams"] != float64(200) ||
+		sh["selected"].(map[string]any)["courier_code"] != "jne" || sh["selected"].(map[string]any)["quote_id"] == "" || len(sh["options"].([]any)) != 2 {
+		t.Errorf("shipping options: %v", sh)
 	}
 	want(t, a.post("/checkout/preview", map[string]any{"cart_item_ids": []int64{itemID}, "address_id": bAddr}), http.StatusUnprocessableEntity, "VALIDATION_ERROR")
 	want(t, b.post("/checkout/preview", map[string]any{"cart_item_ids": []int64{itemID}}), http.StatusUnprocessableEntity, "VALIDATION_ERROR")
 	want(t, a.post("/checkout/preview", map[string]any{"cart_item_ids": []int64{itemID}, "buy_now": map[string]any{"variant_id": v, "quantity": 1}}),
 		http.StatusUnprocessableEntity, "VALIDATION_ERROR")
 	res = a.post("/checkout/preview", map[string]any{"buy_now": map[string]any{"variant_id": v, "quantity": 1}})
-	if res.data()["total"] != float64(129000) || res.data()["is_buy_now"] != true {
+	if res.data()["total"] != float64(129000+9000) || res.data()["is_buy_now"] != true {
 		t.Errorf("buy now preview: %s", res.raw)
 	}
 	exec(t, db, "UPDATE product_variants SET price = 139000 WHERE id = $1", v)
-	if res = a.post("/checkout/preview", map[string]any{"cart_item_ids": []int64{itemID}}); res.data()["total"] != float64(278000) {
+	if res = a.post("/checkout/preview", map[string]any{"cart_item_ids": []int64{itemID}}); res.data()["total"] != float64(278000+9000) {
 		t.Errorf("price recalculated: %v", res.data()["total"])
 	}
 
-	// Create order: idempotent, stale total refused, stock revalidated.
-	order := map[string]any{"cart_item_ids": []int64{itemID}, "address_id": addr, "idempotency_key": "order-key-0001", "expected_total": 258000}
+	// Create order: idempotent, stale total refused, stock revalidated, the
+	// shipping cost only from a stored quote (no client cost field).
+	quote, _ := a.quote(map[string]any{"cart_item_ids": []int64{itemID}, "address_id": addr})
+	order := map[string]any{"cart_item_ids": []int64{itemID}, "address_id": addr, "shipping_quote_id": quote,
+		"idempotency_key": "order-key-0001", "expected_total": 258000 + 9000}
 	want(t, a.post("/orders", order), http.StatusConflict, "PRICE_CHANGED")
-	order["expected_total"] = 278000
+	forged := map[string]any{"cart_item_ids": []int64{itemID}, "address_id": addr, "shipping_quote_id": quote,
+		"idempotency_key": "order-key-0003", "shipping_cost": 0}
+	want(t, a.post("/orders", forged), http.StatusBadRequest, "UNKNOWN_FIELD") // no client shipping cost
+	want(t, b.post("/orders", map[string]any{"cart_item_ids": []int64{itemID}, "address_id": bAddr, "shipping_quote_id": quote,
+		"idempotency_key": "order-key-0004"}), http.StatusUnprocessableEntity, "VALIDATION_ERROR")
+	order["expected_total"] = 278000 + 9000
 	want(t, a.post("/orders", map[string]any{"cart_item_ids": []int64{itemID}, "address_id": addr}), http.StatusUnprocessableEntity, "VALIDATION_ERROR")
 	want(t, a.post("/orders", map[string]any{"cart_item_ids": []int64{itemID}, "address_id": bAddr, "idempotency_key": "order-key-0002"}),
 		http.StatusUnprocessableEntity, "VALIDATION_ERROR")
@@ -248,7 +257,8 @@ func TestAPICartCheckoutAndOrders(t *testing.T) {
 	want(t, res, http.StatusCreated, "")
 	o := res.data()
 	number := o["order_number"].(string)
-	if o["status"] != "WAITING_PAYMENT" || o["total"] != float64(278000) || res.header.Get("Location") != "/api/v1/orders/"+number ||
+	if o["status"] != "WAITING_PAYMENT" || o["total"] != float64(278000+9000) || o["shipping_cost"] != float64(9000) ||
+		o["shipping"].(map[string]any)["courier_name"] != "JNE" || res.header.Get("Location") != "/api/v1/orders/"+number ||
 		!rfc3339WIB.MatchString(o["created_at"].(string)) || o["actions"].(map[string]any)["can_cancel"] != true {
 		t.Errorf("order: %s", res.raw)
 	}
@@ -279,10 +289,11 @@ func TestAPICartCheckoutAndOrders(t *testing.T) {
 		if i == 1 {
 			addrID = bAddr
 		}
+		q, _ := cl.quote(map[string]any{"buy_now": map[string]any{"variant_id": v, "quantity": 1}, "address_id": addrID})
 		go func() {
 			defer wg.Done()
 			r := cl.post("/orders", map[string]any{"buy_now": map[string]any{"variant_id": v, "quantity": 1}, "address_id": addrID,
-				"idempotency_key": fmt.Sprintf("last-unit-%d", i)})
+				"shipping_quote_id": q, "idempotency_key": fmt.Sprintf("last-unit-%d", i)})
 			mu.Lock()
 			codes = append(codes, r.status)
 			mu.Unlock()
@@ -293,7 +304,7 @@ func TestAPICartCheckoutAndOrders(t *testing.T) {
 		t.Errorf("last unit: %v", codes)
 	}
 	want(t, b.post("/orders", map[string]any{"buy_now": map[string]any{"variant_id": v, "quantity": 1}, "address_id": bAddr,
-		"idempotency_key": "after-sold-out"}), http.StatusConflict, "STOCK_CHANGED")
+		"shipping_quote_id": "stale-quote", "idempotency_key": "after-sold-out"}), http.StatusConflict, "STOCK_CHANGED")
 
 	// Lists, filters, cancel.
 	res = a.get("/orders?status=unpaid")
@@ -341,10 +352,12 @@ func TestAPIPaymentReturnsToAppLink(t *testing.T) {
 	a.signIn("a@example.com")
 	res := a.post("/me/addresses", map[string]any{"label": "Rumah", "recipient_name": "Siti", "phone": "081298765432",
 		"province": "Jawa Barat", "city": "Kota Bandung", "district": "Coblong", "village": "Dago", "postal_code": "40135",
-		"street_address": "Jl. Ir. H. Juanda No. 100"})
+		"street_address": "Jl. Ir. H. Juanda No. 100", "shipping_area_id": a.area("Coblong")})
 	addr := num(res.data()["id"])
 	v := queryID(t, db, "SELECT id FROM product_variants WHERE sku = 'ASH-BLK-M'")
-	res = a.post("/orders", map[string]any{"buy_now": map[string]any{"variant_id": v, "quantity": 1}, "address_id": addr, "idempotency_key": "pay-key-001"})
+	q, _ := a.quote(map[string]any{"buy_now": map[string]any{"variant_id": v, "quantity": 1}, "address_id": addr})
+	res = a.post("/orders", map[string]any{"buy_now": map[string]any{"variant_id": v, "quantity": 1}, "address_id": addr,
+		"shipping_quote_id": q, "idempotency_key": "pay-key-001"})
 	number := res.data()["order_number"].(string)
 
 	res = a.post("/orders/"+number+"/payment", nil)
@@ -363,7 +376,7 @@ func TestAPIPaymentReturnsToAppLink(t *testing.T) {
 	if res = a.get("/orders/" + number + "/payment"); res.data()["paid"] != false {
 		t.Errorf("unpaid after redirect: %s", res.raw)
 	}
-	fake.SetStatus(number+"-P1", "settlement", "bank_transfer", 129000)
+	fake.SetStatus(number+"-P1", "settlement", "bank_transfer", 129000+9000) // items + shipping = orders.total
 	res = a.get("/orders/" + number + "/payment")
 	if res.data()["paid"] != true || res.data()["order_status"] != "WAITING_CONFIRMATION" {
 		t.Errorf("after the provider confirms: %s", res.raw)
@@ -378,10 +391,12 @@ func TestAPIReviewsAndReturns(t *testing.T) {
 	b.signIn("b@example.com")
 	res := a.post("/me/addresses", map[string]any{"label": "Rumah", "recipient_name": "Siti Rahmawati", "phone": "081298765432",
 		"province": "Jawa Barat", "city": "Kota Bandung", "district": "Coblong", "village": "Dago", "postal_code": "40135",
-		"street_address": "Jl. Ir. H. Juanda No. 100"})
+		"street_address": "Jl. Ir. H. Juanda No. 100", "shipping_area_id": a.area("Coblong")})
 	addr := num(res.data()["id"])
 	v := queryID(t, db, "SELECT id FROM product_variants WHERE sku = 'ASH-BLK-M'")
-	res = a.post("/orders", map[string]any{"buy_now": map[string]any{"variant_id": v, "quantity": 2}, "address_id": addr, "idempotency_key": "rv-order-01"})
+	q, _ := a.quote(map[string]any{"buy_now": map[string]any{"variant_id": v, "quantity": 2}, "address_id": addr})
+	res = a.post("/orders", map[string]any{"buy_now": map[string]any{"variant_id": v, "quantity": 2}, "address_id": addr,
+		"shipping_quote_id": q, "idempotency_key": "rv-order-01"})
 	number := res.data()["order_number"].(string)
 	item := num(res.data()["items"].([]any)[0].(map[string]any)["id"])
 
@@ -456,15 +471,20 @@ func TestAPIContract(t *testing.T) {
 	a.signIn("a@example.com")
 	res := a.post("/me/addresses", map[string]any{"label": "Rumah", "recipient_name": "Siti", "phone": "081298765432",
 		"province": "Jawa Barat", "city": "Kota Bandung", "district": "Coblong", "village": "Dago", "postal_code": "40135",
-		"street_address": "Jl. Ir. H. Juanda No. 100"})
+		"street_address": "Jl. Ir. H. Juanda No. 100", "shipping_area_id": a.area("Coblong")})
 	addr := num(res.data()["id"])
 	v := queryID(t, db, "SELECT id FROM product_variants WHERE sku = 'ASH-BLK-M'")
 	a.post("/cart/items", map[string]any{"variant_id": v, "quantity": 1})
-	order := a.post("/orders", map[string]any{"buy_now": map[string]any{"variant_id": v, "quantity": 1}, "address_id": addr, "idempotency_key": "contract-1"})
+	q, _ := a.quote(map[string]any{"buy_now": map[string]any{"variant_id": v, "quantity": 1}, "address_id": addr})
+	order := a.post("/orders", map[string]any{"buy_now": map[string]any{"variant_id": v, "quantity": 1}, "address_id": addr,
+		"shipping_quote_id": q, "idempotency_key": "contract-1"})
 
 	bodies := map[string]apiRes{
 		"me": a.get("/me"), "cart": a.get("/cart"), "order": order, "orders": a.get("/orders"),
 		"products": a.get("/products"), "product": a.get("/products/kaos-ashanum-basic"), "addresses": a.get("/me/addresses"),
+		"tracking": a.get("/orders/" + order.data()["order_number"].(string) + "/tracking"),
+		"areas":    a.get("/shipping/areas?q=Coblong"),
+		"rates":    a.post("/shipping/rates", map[string]any{"buy_now": map[string]any{"variant_id": v, "quantity": 1}, "address_id": addr}),
 	}
 	forbidden := []string{"password", "_hash", "token", "role", "admin", "user_id", "provider_order_id", "snap", "audit", "idempotency"}
 	timeKey := regexp.MustCompile(`"[a-z_]*_at":"([^"]*)"`)

@@ -14,9 +14,9 @@
   {{else if eq $o.Status "WAITING_CONFIRMATION"}}
   <p class="order-banner__text">Pembayaran diterima. Pesanan menunggu konfirmasi penjual.</p>
   {{else if eq $o.Status "PROCESSING"}}
-  <p class="order-banner__text">Pesanan dikonfirmasi dan sedang dikemas penjual.</p>
+  <p class="order-banner__text">{{if and $o.Shipment (eq $o.Shipment.Status "CREATED")}}Pesanan sudah dikemas dan menunggu dijemput kurir.{{else}}Pesanan dikonfirmasi dan sedang dikemas penjual.{{end}}</p>
   {{else if eq $o.Status "SHIPPED"}}
-  <p class="order-banner__text">Pesanan sudah dikirim{{with $o.Shipment}} lewat {{.Courier}}{{end}}.</p>
+  <p class="order-banner__text">{{if and $o.Shipment (eq $o.Shipment.Status "DELIVERED")}}Paket sudah diterima. Pesanan akan diselesaikan oleh penjual.{{else}}Pesanan sudah dikirim{{with $o.Shipment}} lewat {{.Courier}}{{end}}.{{end}}</p>
   {{else if eq $o.Status "CANCELLED"}}
   <p class="order-banner__text">{{$o.CancelReasonText}}</p>
   {{else if eq $o.Status "COMPLETED"}}
@@ -25,7 +25,7 @@
 </section>
 
 {{if and (eq $o.Status "WAITING_PAYMENT") $o.Sandbox $o.PaymentEnabled}}
-<div class="alert alert--warning pay-sandbox">Mode uji <strong>Midtrans Sandbox</strong>: tidak ada uang sungguhan. Total belum termasuk ongkos kirim.</div>
+<div class="alert alert--warning pay-sandbox">Mode uji <strong>Midtrans Sandbox</strong>: tidak ada uang sungguhan.</div>
 {{end}}
 
 <section class="card order-meta">
@@ -37,15 +37,7 @@
   {{with $o.CompletedAt}}<div><span class="muted">Waktu Selesai</span><span>{{datetime .}}</span></div>{{end}}
 </section>
 
-{{with $o.Shipment}}
-<section class="card order-meta" aria-labelledby="od-shipment">
-  <h2 class="card__title form-section-title" id="od-shipment">{{icon "truck"}} Pengiriman</h2>
-  <div><span class="muted">Kurir</span><span>{{.Courier}}{{with .Service}} · {{.}}{{end}}</span></div>
-  {{with .Tracking}}<div><span class="muted">No. Resi</span><strong>{{.}}</strong></div>{{end}}
-  <div><span class="muted">Dikirim</span><span>{{datetime .ShippedAt}}</span></div>
-  <p class="muted od-shipment-note">Data pengiriman diisi oleh penjual. Lacak paket di situs kurir; status pengiriman belum diperbarui otomatis.</p>
-</section>
-{{end}}
+{{template "order-shipping" $o}}
 
 <section class="card pay-card" aria-labelledby="od-payment">
   <h2 class="card__title form-section-title" id="od-payment">{{icon "wallet"}} Pembayaran</h2>
@@ -127,7 +119,7 @@
   <h2 class="card__title form-section-title" id="od-summary">Rincian Pembayaran</h2>
   <dl class="co-summary">
     <div><dt>Subtotal Produk ({{$o.Quantity}} barang)</dt><dd>{{rupiah $o.Subtotal}}</dd></div>
-    <div><dt>Ongkos Kirim</dt><dd{{if not $o.ShippingCost}} class="muted"{{end}}>{{if $o.ShippingCost}}{{rupiah $o.ShippingCost}}{{else}}Belum dihitung{{end}}</dd></div>
+    <div><dt>Ongkos Kirim{{with $o.Shipping}} <span class="muted">({{.Name}})</span>{{end}}</dt><dd{{if not $o.ShippingCost}} class="muted"{{end}}>{{if $o.ShippingCost}}{{rupiah $o.ShippingCost}}{{else}}Belum dihitung{{end}}</dd></div>
     <div><dt>Diskon</dt><dd{{if not $o.Discount}} class="muted"{{end}}>{{if $o.Discount}}-{{rupiah $o.Discount}}{{else}}–{{end}}</dd></div>
     <div class="co-summary__total"><dt>Total Pesanan</dt><dd>{{rupiah $o.Total}}</dd></div>
   </dl>
@@ -152,5 +144,51 @@
   {{if $o.Returns.Eligible}}<a class="btn btn--outline" href="/account/returns/new?order={{$o.Number}}">Ajukan Pengembalian</a>{{end}}
   {{if $o.CanReview}}<a class="btn btn--primary" href="/account/reviews/new?item={{$o.FirstUnreviewed}}&amp;return_to=%2Faccount%2Forders%2F{{$o.Number}}">Beri Ulasan</a>{{end}}
 </div>
+{{end}}
+{{end}}
+
+{{/* Shipping: the courier the buyer chose at checkout (snapshot), and once
+     the shop shipped, the shipment with its status and tracking history.
+     Everything comes from the database (updated by the provider webhook,
+     the shop or reconciliation): opening this page never calls the
+     shipping provider. */}}
+{{define "order-shipping"}}
+{{$o := .}}{{$s := .Shipment}}
+{{if or $o.Shipping $s}}
+<section class="card ship-card" aria-labelledby="od-shipment">
+  <div class="ship-card__head">
+    <h2 class="card__title form-section-title" id="od-shipment">{{icon "truck"}} Pengiriman</h2>
+    {{with $s}}{{if not .Manual}}<span class="ship-status ship-status--{{.Status}}">{{.Status.Label}}</span>{{end}}{{end}}
+  </div>
+  <dl class="co-summary ship-card__meta">
+    {{with $s}}
+    <div><dt>Kurir</dt><dd>{{.Courier}}{{with .Service}} {{.}}{{end}}</dd></div>
+    {{else}}{{with $o.Shipping}}
+    <div><dt>Kurir</dt><dd>{{.Name}}</dd></div>
+    {{end}}{{end}}
+    {{with $o.Shipping}}{{with .EstimateLabel}}<div><dt>Estimasi</dt><dd>{{.}}</dd></div>{{end}}{{end}}
+    {{with $s}}{{with .Tracking}}<div><dt>No. Resi</dt><dd><strong class="ship-awb">{{.}}</strong></dd></div>{{end}}
+    {{with .ShippedAt}}<div><dt>Dikirim</dt><dd>{{datetime .}}</dd></div>{{end}}
+    {{with .DeliveredAt}}<div><dt>Diterima</dt><dd>{{datetime .}}</dd></div>{{end}}{{end}}
+  </dl>
+  {{if not $s}}
+  <p class="muted ship-card__note">{{if eq $o.Status "WAITING_PAYMENT"}}Kurir dipanggil setelah pembayaran dikonfirmasi.{{else if eq $o.Status "CANCELLED"}}Pesanan dibatalkan; tidak ada pengiriman.{{else}}Penjual sedang menyiapkan paket. Nomor resi muncul setelah pengiriman dibuat.{{end}}</p>
+  {{else if $s.Manual}}
+  <p class="muted ship-card__note">Data pengiriman diisi oleh penjual. Lacak paket di situs kurir dengan nomor resi di atas.</p>
+  {{else}}
+  {{with $s.TrackingURL}}<p class="ship-card__link"><a href="{{.}}" target="_blank" rel="noopener noreferrer">{{icon "external"}} Lacak di situs kurir</a></p>{{end}}
+  {{if $s.Events}}
+  <ol class="ship-timeline" aria-label="Riwayat pengiriman">
+    {{range $i, $e := $s.Events}}
+    <li class="ship-timeline__item{{if eq $i 0}} is-latest{{end}}">
+      <p class="ship-timeline__text">{{$e.Text}}{{with $e.Location}} <span class="muted">· {{.}}</span>{{end}}</p>
+      <p class="ship-timeline__time">{{datetime $e.Time}}</p>
+    </li>
+    {{end}}
+  </ol>
+  {{end}}
+  {{with $s.LastSyncedAt}}<p class="muted ship-card__note">Diperbarui {{datetime .}}</p>{{end}}
+  {{end}}
+</section>
 {{end}}
 {{end}}

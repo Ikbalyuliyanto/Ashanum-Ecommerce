@@ -12,15 +12,19 @@ Produk ───────── GET /products?q=&category=&sort= , GET /produ
       ↓
 Keranjang ────── POST /cart/items, GET /cart  (atau Beli Sekarang tanpa keranjang)
       ↓
-Checkout ─────── POST /checkout/preview  →  POST /orders (idempotency_key)
+Alamat ───────── GET /shipping/areas?q=  →  POST/PATCH /me/addresses {shipping_area_id}
+      ↓
+Checkout ─────── POST /checkout/preview (opsi kurir)  →  POST /orders (shipping_quote_id, idempotency_key)
       ↓
 Pesanan ──────── GET /orders/{order_number}
       ↓
-Pembayaran ───── POST /orders/{order_number}/payment  →  buka redirect_url
+Pembayaran ───── POST /orders/{order_number}/payment  →  buka redirect_url (sebesar total: barang + ongkir)
       ↓
 Kembali ke app ─ app link API_PAYMENT_FINISH_URL (deep link)
       ↓
 Refresh status ─ GET /orders/{order_number}/payment  (server cek ke Midtrans)
+      ↓
+Lacak paket ──── GET /orders/{order_number}/tracking  (dari database)
 ```
 
 ## 1. Register / Login
@@ -46,20 +50,41 @@ Refresh status ─ GET /orders/{order_number}/payment  (server cek ke Midtrans)
 - Gambar: pakai `image_url` / `thumbnail_url` apa adanya (sudah di-resize Cloudinary).
 - Harga integer rupiah: format "Rp129.000" di aplikasi.
 
-## 3. Keranjang & checkout
+## 3. Alamat & lokasi pengiriman
+
+- Form alamat punya kolom pencarian "Kecamatan / kode pos": panggil
+  `GET /shipping/areas?q=<teks>` setelah pengguna berhenti mengetik (debounce ±400 ms,
+  minimal 3 huruf; endpoint dibatasi 60/menit). Tampilkan `label`.
+- Simpan `shipping_area_id` yang dipilih bersama alamat. Provinsi, kota, kecamatan, dan
+  kode pos diisi server dari area itu; isi kelurahan dan jalan dari pengguna.
+- Alamat dengan `shipping_area_id: null` (dibuat sebelum ongkir aktif) → tampilkan
+  "Lengkapi lokasi pengiriman" dan arahkan ke form ubah alamat.
+
+## 4. Keranjang & checkout
 
 - Tambah: `POST /cart/items {variant_id, quantity}` → keranjang lengkap.
 - Checkout dari keranjang: `POST /checkout/preview {cart_item_ids, address_id?}`.
   Beli Sekarang: `POST /checkout/preview {buy_now: {variant_id, quantity}}`.
 - Tampilkan `items[].problem` dan `warnings`; tombol "Buat Pesanan" hanya jika `ready`.
-- Ongkos kirim: tampilkan `shipping.message` (belum dihitung) — jangan menulis "Gratis".
-- Buat pesanan: `POST /orders` dengan `idempotency_key` acak per percobaan checkout
-  (UUID tanpa tanda kurung kurawal, 8–64 karakter) dan `expected_total` dari preview.
+- Ongkos kirim: bila `shipping.status = READY`, tampilkan `shipping.selected`
+  ("JNE Reguler · 2–3 hari · Rp9.000 · Ubah"); "Ubah" membuka bottom sheet berisi
+  `shipping.options` (sudah urut termurah). Saat pengguna memilih, panggil preview lagi
+  dengan `shipping_quote_id` pilihan itu — total yang tampil selalu `total` dari server.
+  Status lain: tampilkan `shipping.message`, tombol "Buat Pesanan" mati. Jangan pernah
+  menulis "Gratis" untuk `cost: 0`.
+- Ganti alamat atau jumlah → preview ulang (quote lama tidak berlaku untuk paket/alamat lain).
+- Buat pesanan: `POST /orders` dengan `shipping_quote_id` dari `shipping.selected`,
+  `idempotency_key` acak per percobaan checkout (UUID tanpa tanda kurung kurawal, 8–64
+  karakter) dan `expected_total` = `total` preview. Aplikasi tidak pernah mengirim ongkir
+  atau berat.
   Jika koneksi putus, kirim ulang dengan key yang sama: server mengembalikan pesanan yang
   sama (`200`), bukan pesanan ganda.
-- `409 PRICE_CHANGED` / `STOCK_CHANGED` → ambil preview baru dan minta konfirmasi lagi.
+- `409 PRICE_CHANGED` / `STOCK_CHANGED` / `SHIPPING_CHANGED` → ambil preview baru dan minta
+  konfirmasi lagi (quote berlaku ±30 menit; preview dengan id yang sama memperbaruinya).
+- `503 SHIPPING_PROVIDER_UNAVAILABLE` (dari `/shipping/rates`) atau preview dengan
+  `PROVIDER_UNAVAILABLE` → "Pengiriman sementara tidak dapat dihitung. Silakan coba lagi."
 
-## 4. Pembayaran (Midtrans Sandbox)
+## 5. Pembayaran (Midtrans Sandbox)
 
 1. `POST /orders/{order_number}/payment` → `redirect_url`.
 2. Buka di Custom Tab (Android) / `ASWebAuthenticationSession` atau SFSafariViewController
@@ -80,10 +105,15 @@ Refresh status ─ GET /orders/{order_number}/payment  (server cek ke Midtrans)
 5. Status final datang dari notifikasi Midtrans (webhook) atau pengecekan status; aplikasi
    cukup membaca ulang.
 
-## 5. Setelah pesanan
+## 6. Setelah pesanan
 
 - Riwayat: `GET /orders?status=…`. Detail: `GET /orders/{order_number}` (`actions`,
-  `shipment`, `returns`).
+  `shipping`, `shipment`, `returns`).
+- Lacak paket: `GET /orders/{order_number}/tracking` → `shipment.status_label`, resi
+  (`tracking_number`, salin/bagikan), `tracking_url` (buka di browser), `events` (timeline,
+  terbaru dulu). Baca ulang saat layar dibuka / pull-to-refresh; tidak ada push. Paket
+  `DELIVERED` belum berarti pesanan selesai: pesanan menjadi COMPLETED setelah penjual
+  menyelesaikannya, baru ulasan dan retur terbuka.
 - Pesanan selesai (`actions.can_review`): `POST /reviews {order_item_id, rating, comment}`.
 - Pengembalian (`actions.can_return`, sebelum `return_deadline`):
   `POST /returns {order_number, items, type, reason, …}`; pantau `GET /me/returns/{n}`.
@@ -91,7 +121,8 @@ Refresh status ─ GET /orders/{order_number}/payment  (server cek ke Midtrans)
 ## Belum termasuk (backlog)
 
 - Aplikasi Flutter/Android/iOS, push notification, App Link/Universal Link terdaftar.
-- Integrasi ongkir/kurir (biaya kirim masih 0, pelacakan manual).
+- Pengiriman live (Biteship baru mode testing; belum diuji dengan API asli), notifikasi
+  push perubahan status paket.
 - Midtrans produksi dan refund otomatis.
 - Layar "perangkat aktif" (data `device_name`/`last_used_at` sudah disimpan).
 - Pengaturan toko/admin dan modul pelanggan (CRM) — ditunda sejak Fase 8.

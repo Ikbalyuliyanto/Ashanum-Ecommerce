@@ -151,6 +151,12 @@ type Input struct {
 	Images      []ImageInput
 	Attributes  []AttributeInput
 	Variants    []VariantInput
+	// Shipping weight per unit in grams (required for an active product)
+	// and optional package dimensions in cm (0 = unknown).
+	WeightGrams int
+	LengthCM    int
+	WidthCM     int
+	HeightCM    int
 }
 
 type ImageInput struct {
@@ -171,6 +177,7 @@ type VariantInput struct {
 	OriginalPrice int64 // 0 = no strike-through price
 	Stock         int
 	Options       map[string]string
+	WeightGrams   int // 0 = the product's weight
 }
 
 func discountPercent(price, original int64) int {

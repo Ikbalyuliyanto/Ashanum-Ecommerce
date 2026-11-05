@@ -17,14 +17,22 @@ ORDER BY o.created_at DESC, o.id DESC
 LIMIT @row_limit OFFSET @row_offset;
 
 -- GetOrder also reads whether a PAID payment exists (returns need it) and
--- the manual shipment, so the detail page needs no extra round trip.
+-- the order's active shipment, so the detail page needs no extra round trip
+-- (tracking events are read only when a shipment exists).
 -- name: GetOrder :one
 SELECT o.*,
        (o.paid_at IS NOT NULL AND EXISTS (
             SELECT 1 FROM payments p WHERE p.order_id = o.id AND p.status = 'PAID'))::boolean AS paid,
-       s.courier_name, s.service_name, s.tracking_number, s.shipped_at
+       s.id AS shipment_id, s.method AS shipment_method, s.provider AS shipment_provider,
+       s.courier_name, s.courier_code AS shipment_courier_code, s.service_name, s.service_code AS shipment_service_code,
+       s.tracking_number, s.tracking_url AS shipment_tracking_url, s.status AS shipment_status,
+       s.estimated_days AS shipment_estimated_days, s.shipped_at, s.booked_at AS shipment_booked_at,
+       s.delivered_at AS shipment_delivered_at, s.cancelled_at AS shipment_cancelled_at,
+       s.last_synced_at AS shipment_synced_at, s.created_at AS shipment_created_at, s.note AS shipment_note,
+       s.failure_reason AS shipment_failure_reason
 FROM orders o
-LEFT JOIN shipments s ON s.order_id = o.id
+-- At most one active shipment per order (shipments_active_order_idx).
+LEFT JOIN shipments s ON s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'FAILED')
 WHERE o.order_number = @order_number AND o.user_id = @user_id;
 
 -- ListOrderItems returns the lines with their review (if any) and the

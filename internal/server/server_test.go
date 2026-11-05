@@ -14,6 +14,7 @@ import (
 	"ecommerce/internal/auth"
 	"ecommerce/internal/config"
 	"ecommerce/internal/payment"
+	"ecommerce/internal/shipping/shippingtest"
 	"ecommerce/internal/view"
 	"ecommerce/web"
 )
@@ -60,10 +61,7 @@ func buildRouterCfg(t *testing.T, db *pgxpool.Pool, env string, provider payment
 	}
 	cfg := &config.Config{Env: env, Session: config.Session{Secret: []byte("0123456789abcdef0123456789abcdef")},
 		Midtrans: config.Midtrans{Env: config.MidtransSandbox}}
-	if mod != nil {
-		mod(cfg)
-	}
-	return NewRouter(Deps{
+	deps := Deps{
 		Config:          cfg,
 		Log:             log,
 		DB:              db,
@@ -71,8 +69,21 @@ func buildRouterCfg(t *testing.T, db *pgxpool.Pool, env string, provider payment
 		Assets:          assets,
 		PaymentProvider: provider,
 		CheckoutOrigin:  checkoutOrigin,
-	})
+	}
+	// With a database, shipping runs against the fake Biteship API (one per
+	// database, see shipFor).
+	if db != nil {
+		ship := shipFor(t, db)
+		cfg.Shipping, deps.ShippingProvider = shippingtest.Config(ship.Fake.URL), ship.Client
+	}
+	if mod != nil {
+		mod(cfg)
+	}
+	return NewRouter(deps)
 }
+
+// shipFor is the fake shipping provider of a test database.
+func shipFor(t testing.TB, db *pgxpool.Pool) *shippingtest.Env { return shippingtest.For(t, db) }
 
 func do(h http.Handler, req *http.Request) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()

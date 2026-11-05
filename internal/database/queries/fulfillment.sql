@@ -22,11 +22,18 @@ SELECT o.*,
        u.email,
        coalesce(up.first_name, '')::text AS first_name,
        coalesce(up.last_name, '')::text  AS last_name,
-       s.courier_name, s.service_name, s.tracking_number, s.shipped_at, s.note AS shipment_note
+       s.id AS shipment_id, s.method AS shipment_method, s.provider AS shipment_provider,
+       s.courier_name, s.courier_code AS shipment_courier_code, s.service_name, s.service_code AS shipment_service_code,
+       s.tracking_number, s.tracking_url AS shipment_tracking_url, s.status AS shipment_status,
+       s.estimated_days AS shipment_estimated_days, s.shipped_at, s.booked_at AS shipment_booked_at,
+       s.delivered_at AS shipment_delivered_at, s.cancelled_at AS shipment_cancelled_at,
+       s.last_synced_at AS shipment_synced_at, s.created_at AS shipment_created_at, s.note AS shipment_note,
+       s.failure_reason AS shipment_failure_reason
 FROM orders o
 JOIN users u ON u.id = o.user_id
 LEFT JOIN user_profiles up ON up.user_id = o.user_id
-LEFT JOIN shipments s ON s.order_id = o.id
+-- At most one active shipment per order (shipments_active_order_idx).
+LEFT JOIN shipments s ON s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'FAILED')
 WHERE o.order_number = @order_number;
 
 -- name: AdminOrderReturns :many
@@ -62,9 +69,12 @@ WHERE id = @id AND status = 'WAITING_CONFIRMATION' AND paid_at IS NOT NULL;
 -- name: ShipOrder :execrows
 UPDATE orders SET status = 'SHIPPED' WHERE id = @id AND status = 'PROCESSING';
 
+-- CreateShipment records a manual shipment (the fallback when no provider
+-- booking is made). At most one active shipment per order: a unique index
+-- refuses a second one.
 -- name: CreateShipment :exec
-INSERT INTO shipments (order_id, courier_name, service_name, tracking_number, note, shipped_at, created_by)
-VALUES (@order_id, @courier_name, @service_name, @tracking_number, @note, @shipped_at, @created_by);
+INSERT INTO shipments (order_id, method, courier_name, service_name, tracking_number, note, shipped_at, status, created_by)
+VALUES (@order_id, 'MANUAL', @courier_name, @service_name, @tracking_number, @note, @shipped_at, 'IN_TRANSIT', @created_by);
 
 -- SHIPPED → COMPLETED. completed_at starts the return window and makes the
 -- order's items reviewable.

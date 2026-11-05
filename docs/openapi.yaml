@@ -137,14 +137,31 @@ components:
         longitude: { type: number }
         maps_url: { type: string }
         is_primary: { type: boolean }
+        shipping_area_id:
+          type: string
+          description: Id from GET /shipping/areas ("" removes it). Province, city, district and postal code then come from the area.
     Address:
       allOf:
         - $ref: "#/components/schemas/AddressInput"
         - type: object
           properties:
             id: { type: integer }
+            shipping_area_id: { type: [string, "null"] }
+            shipping_area_label: { type: [string, "null"] }
             created_at: { $ref: "#/components/schemas/Time" }
             updated_at: { $ref: "#/components/schemas/Time" }
+    Area:
+      type: object
+      properties:
+        id: { type: string }
+        provider: { type: string, example: biteship }
+        label: { type: string, example: "Coblong, Bandung, Jawa Barat. 40132" }
+        province: { type: string }
+        city: { type: string }
+        district: { type: string }
+        postal_code: { type: [string, "null"] }
+        latitude: { type: [number, "null"] }
+        longitude: { type: [number, "null"] }
     Category:
       type: object
       properties:
@@ -266,12 +283,94 @@ components:
             lines: { type: integer }
             quantity: { type: integer }
             subtotal: { $ref: "#/components/schemas/Money" }
-    Shipping:
+    Quote:
+      type: object
+      description: A shipping rate stored by the server; POST /orders accepts only its quote_id.
+      properties:
+        quote_id: { type: string }
+        provider: { type: string }
+        courier_code: { type: string, example: jne }
+        courier_name: { type: string, example: JNE }
+        service_code: { type: string, example: reg }
+        service_name: { type: string, example: Reguler }
+        description: { type: string }
+        price: { $ref: "#/components/schemas/Money" }
+        estimated_days: { type: [string, "null"], example: "2-3" }
+        estimate_label: { type: [string, "null"], example: "2–3 hari" }
+        expires_at: { $ref: "#/components/schemas/Time" }
+    CheckoutShipping:
       type: object
       properties:
+        status: { type: string, enum: [READY, ADDRESS_REQUIRED, AREA_REQUIRED, ITEMS_BLOCKED, NO_COURIER, PROVIDER_UNAVAILABLE, NOT_CONFIGURED] }
+        message: { type: [string, "null"] }
+        cost: { $ref: "#/components/schemas/Money", description: "Selected price; 0 = nothing selected (not free shipping)" }
+        weight_grams: { type: integer }
+        selected: { oneOf: [{ $ref: "#/components/schemas/Quote" }, { type: "null" }] }
+        options: { type: array, items: { $ref: "#/components/schemas/Quote" }, description: Cheapest first }
+        changed: { type: boolean, description: The requested quote is no longer offered; the cheapest was selected }
+    OrderShipping:
+      type: object
+      description: Shipping chosen at checkout (snapshot). All null except cost 0 for orders placed before shipping rates.
+      properties:
         cost: { $ref: "#/components/schemas/Money" }
-        status: { type: string, const: PENDING_INTEGRATION }
-        message: { type: string }
+        provider: { type: [string, "null"] }
+        courier_code: { type: [string, "null"] }
+        courier_name: { type: [string, "null"] }
+        service_code: { type: [string, "null"] }
+        service_name: { type: [string, "null"] }
+        estimated_days: { type: [string, "null"] }
+        estimate_label: { type: [string, "null"] }
+        weight_grams: { type: [integer, "null"] }
+        area_label: { type: [string, "null"] }
+    Shipment:
+      type: object
+      properties:
+        method: { type: string, enum: [PROVIDER, MANUAL] }
+        provider: { type: [string, "null"] }
+        status: { type: string, enum: [CREATED, PICKED_UP, IN_TRANSIT, OUT_FOR_DELIVERY, DELIVERED, EXCEPTION, RETURNED, CANCELLED, PENDING] }
+        status_label: { type: string }
+        courier: { type: string }
+        service: { type: [string, "null"] }
+        tracking_number: { type: [string, "null"] }
+        tracking_url: { type: [string, "null"] }
+        estimated_days: { type: [string, "null"] }
+        shipped_at: { type: [string, "null"], format: date-time }
+        delivered_at: { type: [string, "null"], format: date-time }
+        live_tracking: { type: boolean, description: false for manual shipments }
+        last_synced_at: { type: [string, "null"], format: date-time }
+    Tracking:
+      type: object
+      properties:
+        order_number: { type: string }
+        order_status: { type: string }
+        order_status_label: { type: string }
+        shipping: { $ref: "#/components/schemas/OrderShipping" }
+        shipment: { oneOf: [{ $ref: "#/components/schemas/Shipment" }, { type: "null" }] }
+        events:
+          type: array
+          description: Newest first
+          items:
+            type: object
+            properties:
+              status: { type: string }
+              status_label: { type: string }
+              description: { type: string }
+              location: { type: [string, "null"] }
+              time: { $ref: "#/components/schemas/Time" }
+    RatesRequest:
+      type: object
+      additionalProperties: false
+      required: [address_id]
+      properties:
+        cart_item_ids: { type: array, items: { type: integer } }
+        buy_now:
+          type: object
+          additionalProperties: false
+          properties:
+            variant_id: { type: integer }
+            quantity: { type: integer }
+        address_id: { type: integer }
+        shipping_quote_id: { type: string }
     CheckoutRequest:
       type: object
       additionalProperties: false
@@ -284,17 +383,19 @@ components:
             variant_id: { type: integer }
             quantity: { type: integer }
         address_id: { type: integer }
+        shipping_quote_id: { type: string, description: "Chosen shipping option (required for POST /orders). There is no shipping_cost field." }
         idempotency_key: { type: string, pattern: "^[A-Za-z0-9_-]{8,64}$", description: Required for POST /orders }
-        expected_total: { type: integer, description: Total seen in the preview (guard only) }
+        expected_total: { type: integer, description: Total seen in the preview, shipping included (guard only) }
     Preview:
       type: object
       properties:
         items: { type: array, items: { type: object } }
         address: { oneOf: [{ $ref: "#/components/schemas/Address" }, { type: "null" }] }
         subtotal: { $ref: "#/components/schemas/Money" }
-        shipping: { $ref: "#/components/schemas/Shipping" }
+        shipping_cost: { $ref: "#/components/schemas/Money" }
+        shipping: { $ref: "#/components/schemas/CheckoutShipping" }
         discount: { $ref: "#/components/schemas/Money" }
-        total: { $ref: "#/components/schemas/Money" }
+        total: { $ref: "#/components/schemas/Money", description: Items + selected shipping }
         ready: { type: boolean }
         warnings:
           type: array
@@ -330,9 +431,10 @@ components:
         status: { type: string }
         status_label: { type: string }
         subtotal: { $ref: "#/components/schemas/Money" }
-        shipping: { $ref: "#/components/schemas/Shipping" }
+        shipping_cost: { $ref: "#/components/schemas/Money" }
+        shipping: { $ref: "#/components/schemas/OrderShipping" }
         discount: { $ref: "#/components/schemas/Money" }
-        total: { $ref: "#/components/schemas/Money" }
+        total: { $ref: "#/components/schemas/Money", description: "subtotal + shipping_cost - discount: the amount charged" }
         items:
           type: array
           items:
@@ -351,17 +453,7 @@ components:
               returned_quantity: { type: integer }
               returnable_quantity: { type: integer }
         address: { type: object }
-        shipment:
-          oneOf:
-            - type: "null"
-            - type: object
-              properties:
-                method: { type: string, const: MANUAL }
-                courier: { type: string }
-                service: { type: [string, "null"] }
-                tracking_number: { type: [string, "null"] }
-                shipped_at: { $ref: "#/components/schemas/Time" }
-                live_tracking: { type: boolean, const: false }
+        shipment: { oneOf: [{ $ref: "#/components/schemas/Shipment" }, { type: "null" }] }
         latest_payment: { oneOf: [{ $ref: "#/components/schemas/Payment" }, { type: "null" }] }
         payment_enabled: { type: boolean }
         sandbox: { type: boolean }
@@ -589,6 +681,27 @@ paths:
     delete:
       security: [{ bearer: [] }]
       responses: { "200": { description: Cart }, "404": { $ref: "#/components/responses/Error" } }
+  /shipping/areas:
+    get:
+      summary: Search delivery areas (kecamatan, city or postal code) for an address
+      security: [{ bearer: [] }]
+      parameters: [{ name: q, in: query, required: true, schema: { type: string, minLength: 3, maxLength: 60 } }]
+      responses:
+        "200": { description: Areas, content: { application/json: { schema: { properties: { data: { type: array, items: { $ref: "#/components/schemas/Area" } } } } } } }
+        "422": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /shipping/rates:
+    post:
+      summary: Shipping options (quotes) for an address and a selection
+      security: [{ bearer: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/RatesRequest" } } } }
+      responses:
+        "200": { description: Options, content: { application/json: { schema: { properties: { data: { $ref: "#/components/schemas/CheckoutShipping" } } } } } }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
   /checkout/preview:
     post:
       security: [{ bearer: [] }]
@@ -633,6 +746,14 @@ paths:
       summary: Current payment status, verified with the provider
       security: [{ bearer: [] }]
       responses: { "200": { description: "{order_number, order_status, paid, can_pay, payment, sandbox}" } }
+  /orders/{order_number}/tracking:
+    parameters: [{ $ref: "#/components/parameters/orderNumber" }]
+    get:
+      summary: Shipment and tracking history (stored data; never calls the provider)
+      security: [{ bearer: [] }]
+      responses:
+        "200": { description: Tracking, content: { application/json: { schema: { properties: { data: { $ref: "#/components/schemas/Tracking" } } } } } }
+        "404": { $ref: "#/components/responses/Error" }
   /me/reviews:
     get:
       security: [{ bearer: [] }]

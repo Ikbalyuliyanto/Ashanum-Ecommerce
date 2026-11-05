@@ -81,3 +81,15 @@ func FormatDate(t time.Time) string {
 	t = t.In(wib)
 	return strconv.Itoa(t.Day()) + " " + monthsID[t.Month()-1] + " " + strconv.Itoa(t.Year())
 }
+
+// FormatWeight shows a shipping weight: 750 g, 1 kg, 1,2 kg.
+func FormatWeight(grams int) string {
+	if grams < 1000 {
+		return strconv.Itoa(grams) + " g"
+	}
+	kg := strconv.Itoa(grams / 1000)
+	if d := grams % 1000 / 100; d > 0 {
+		kg += "," + strconv.Itoa(d)
+	}
+	return kg + " kg"
+}

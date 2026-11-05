@@ -16,7 +16,7 @@
   </dl>
   {{if eq $o.Status "WAITING_PAYMENT"}}
   <div class="alert alert--info">Status: <strong>{{$o.Status.Label}}</strong>. Selesaikan pembayaran sebelum <strong>{{datetime $o.PaymentDueAt}}</strong>; setelah itu pesanan dibatalkan otomatis.</div>
-  {{if and $o.Sandbox $o.PaymentEnabled}}<div class="alert alert--warning">Mode uji Midtrans Sandbox: tidak ada uang sungguhan. Total belum termasuk ongkos kirim.</div>{{end}}
+  {{if and $o.Sandbox $o.PaymentEnabled}}<div class="alert alert--warning">Mode uji Midtrans Sandbox: tidak ada uang sungguhan.</div>{{end}}
   {{else}}
   <div class="alert alert--info">Status: <strong>{{$o.Status.Label}}</strong>.</div>
   {{end}}

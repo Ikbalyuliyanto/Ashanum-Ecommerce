@@ -42,7 +42,7 @@ func (f *fixture) category(name string, active bool) int64 {
 func (f *fixture) simple(catID int64, name, brand string, price, original int64, mutate func(*Input)) int64 {
 	f.t.Helper()
 	in := Input{
-		CategoryID: catID, Name: name, Brand: brand, Active: true,
+		CategoryID: catID, Name: name, Brand: brand, Active: true, WeightGrams: 250,
 		Images:   []ImageInput{{URL: img}},
 		Variants: []VariantInput{{SKU: "SKU-" + validate.Slug(name), Price: price, OriginalPrice: original, Stock: 5}},
 	}
@@ -174,7 +174,7 @@ func TestSearch(t *testing.T) {
 
 func kaosInput(catID int64) Input {
 	return Input{
-		CategoryID: catID, Name: "Kaos Ashanum Basic", Brand: "Ashanum", Active: true,
+		CategoryID: catID, Name: "Kaos Ashanum Basic", Brand: "Ashanum", Active: true, WeightGrams: 250,
 		Description: "Kaos katun.\r\nNyaman.",
 		Images:      []ImageInput{{URL: img, Alt: "Depan"}, {URL: img}},
 		Attributes: []AttributeInput{

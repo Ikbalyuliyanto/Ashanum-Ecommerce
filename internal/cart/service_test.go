@@ -37,7 +37,7 @@ func (f *fixture) kaos() map[string]int64 {
 		f.t.Fatal(err)
 	}
 	products := product.NewService(product.NewRepository(f.db))
-	_, err = products.Create(f.ctx, product.Input{
+	_, err = products.Create(f.ctx, product.Input{WeightGrams: 100,
 		CategoryID: c.ID, Name: "Kaos Ashanum", Active: true,
 		Attributes: []product.AttributeInput{{Name: "Warna", Values: []string{"Hitam", "Putih"}}, {Name: "Ukuran", Values: []string{"M"}}},
 		Variants: []product.VariantInput{
@@ -58,7 +58,7 @@ func (f *fixture) simple(name, sku string, price int64, stock int) int64 {
 		f.t.Fatal(err)
 	}
 	products := product.NewService(product.NewRepository(f.db))
-	if _, err := products.Create(f.ctx, product.Input{
+	if _, err := products.Create(f.ctx, product.Input{WeightGrams: 100,
 		CategoryID: catID, Name: name, Active: true,
 		Variants: []product.VariantInput{{SKU: sku, Price: price, Stock: stock}},
 	}); err != nil {

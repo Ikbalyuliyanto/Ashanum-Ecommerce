@@ -27,6 +27,18 @@
   <p class="field__hint">Hanya URL https Cloudinary (satu-satunya host gambar yang diizinkan CSP). Gambar tidak disimpan di server.</p>
   {{range $k, $v := $e}}{{if hasPrefix $k "images["}}<p class="field__error">{{$v}}</p>{{end}}{{end}}
 </div>
+<fieldset class="adm-fieldset">
+  <legend class="field__label">Pengiriman</legend>
+  <div class="field-row">
+    {{template "field" (dict "ID" "weight_grams" "Name" "weight_grams" "Label" "Berat per unit (gram)" "Value" (or (and (gt $i.WeightGrams 0) (print $i.WeightGrams)) "")
+        "Mode" "numeric" "Placeholder" "mis. 250" "Hint" "Wajib untuk produk aktif: ongkos kirim dihitung dari berat (tidak ada berat default)." "Error" (index $e "weight_grams"))}}
+  </div>
+  <div class="field-row field-row--3">
+    {{template "field" (dict "ID" "length_cm" "Name" "length_cm" "Label" "Panjang (cm)" "Value" (or (and (gt $i.LengthCM 0) (print $i.LengthCM)) "") "Mode" "numeric" "Optional" true "Error" (index $e "length_cm"))}}
+    {{template "field" (dict "ID" "width_cm" "Name" "width_cm" "Label" "Lebar (cm)" "Value" (or (and (gt $i.WidthCM 0) (print $i.WidthCM)) "") "Mode" "numeric" "Optional" true "Error" (index $e "width_cm"))}}
+    {{template "field" (dict "ID" "height_cm" "Name" "height_cm" "Label" "Tinggi (cm)" "Value" (or (and (gt $i.HeightCM 0) (print $i.HeightCM)) "") "Mode" "numeric" "Optional" true "Error" (index $e "height_cm"))}}
+  </div>
+</fieldset>
 <div class="adm-checks">
   <label class="check"><input type="checkbox" name="active" value="1"{{if $i.Active}} checked{{end}}> Tampilkan di toko (aktif)</label>
   <label class="check"><input type="checkbox" name="featured" value="1"{{if $i.Featured}} checked{{end}}> Produk unggulan</label>

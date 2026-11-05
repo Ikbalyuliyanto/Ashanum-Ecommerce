@@ -41,7 +41,7 @@
         <td data-label="Kategori">{{.CategoryName}}{{if not .CategoryActive}} <span class="adm-badge adm-badge--muted">kategori nonaktif</span>{{end}}</td>
         <td data-label="Harga" class="num">{{if .Price}}{{rupiah .Price}}{{if gt .PriceMax .Price}}–{{rupiah .PriceMax}}{{end}}{{else}}<span class="muted">—</span>{{end}}</td>
         <td data-label="Stok" class="num">{{if .Stock}}{{.Stock}}{{else}}<span class="adm-badge adm-badge--danger">habis</span>{{end}}</td>
-        <td data-label="Status">{{if .Active}}<span class="adm-badge adm-badge--ok">Aktif</span>{{else}}<span class="adm-badge adm-badge--muted">Nonaktif</span>{{end}}</td>
+        <td data-label="Status">{{if .Active}}<span class="adm-badge adm-badge--ok">Aktif</span>{{else}}<span class="adm-badge adm-badge--muted">Nonaktif</span>{{end}}{{if .WeightMissing}} <span class="adm-badge adm-badge--danger" title="Tidak bisa dibeli: ongkos kirim butuh berat">berat belum diatur</span>{{end}}</td>
         <td><a class="btn btn--sm" href="/admin/products/{{.ID}}/edit" hx-boost="false">{{icon "edit"}} Ubah</a></td>
       </tr>
     {{end}}

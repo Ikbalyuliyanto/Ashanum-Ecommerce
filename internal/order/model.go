@@ -7,10 +7,12 @@ package order
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"ecommerce/internal/payment"
 	"ecommerce/internal/returns"
+	"ecommerce/internal/shipping"
 )
 
 var ErrNotFound = errors.New("order: not found")
@@ -108,14 +110,89 @@ type Item struct {
 // Returnable is how many units of the line may still be returned.
 func (i Item) Returnable() int { return max(i.Quantity-i.Returned, 0) }
 
-// Shipment is the shipment the shop entered manually when it shipped the
-// order (no courier API, no live tracking).
-type Shipment struct {
-	Courier   string
-	Service   string
-	Tracking  string
-	Note      string
-	ShippedAt time.Time
+// Shipment is the order's active shipment: booked through the shipping
+// provider (status and tracking events) or entered manually by the shop.
+type Shipment = shipping.Shipment
+
+// ShippingChoice is the order's shipping snapshot: the courier service and
+// cost the buyer chose at checkout. It never changes after the order is
+// placed and stays readable when the provider is down. nil for orders
+// placed before shipping rates existed.
+type ShippingChoice struct {
+	Provider      string
+	CourierCode   string
+	CourierName   string
+	ServiceCode   string
+	ServiceName   string
+	EstimatedDays string
+	WeightGrams   int
+	AreaID        string
+	AreaLabel     string
+}
+
+// Name is "JNE Reguler".
+func (c ShippingChoice) Name() string { return strings.TrimSpace(c.CourierName + " " + c.ServiceName) }
+
+// EstimateLabel is the delivery estimate at checkout ("2–3 hari").
+func (c ShippingChoice) EstimateLabel() string { return shipping.EstimateLabel(c.EstimatedDays) }
+
+// ShipmentColumns are the shipment columns read with an order.
+type ShipmentColumns struct {
+	ID            *int64
+	Method        *string
+	Provider      *string
+	Courier       *string
+	CourierCode   *string
+	Service       *string
+	ServiceCode   *string
+	Tracking      *string
+	TrackingURL   *string
+	Status        *string
+	EstimatedDays *string
+	Note          *string
+	FailureReason *string
+	ShippedAt     *time.Time
+	BookedAt      *time.Time
+	DeliveredAt   *time.Time
+	CancelledAt   *time.Time
+	SyncedAt      *time.Time
+	CreatedAt     *time.Time
+}
+
+// Shipment converts the columns (nil when the order has no shipment).
+func (c ShipmentColumns) Shipment() *Shipment {
+	if c.ID == nil {
+		return nil
+	}
+	return &Shipment{ID: *c.ID, Method: deref(c.Method), Provider: deref(c.Provider), Courier: deref(c.Courier),
+		CourierCode: deref(c.CourierCode), Service: deref(c.Service), ServiceCode: deref(c.ServiceCode),
+		Tracking: deref(c.Tracking), TrackingURL: deref(c.TrackingURL), Status: shipping.Status(deref(c.Status)),
+		EstimatedDays: deref(c.EstimatedDays), Note: deref(c.Note), FailureReason: deref(c.FailureReason),
+		ShippedAt: c.ShippedAt, BookedAt: c.BookedAt, DeliveredAt: c.DeliveredAt, CancelledAt: c.CancelledAt,
+		LastSyncedAt: c.SyncedAt, CreatedAt: deref(c.CreatedAt)}
+}
+
+// ShippingColumns are the order's shipping snapshot columns.
+type ShippingColumns struct {
+	Provider      *string
+	CourierCode   *string
+	CourierName   *string
+	ServiceCode   *string
+	ServiceName   *string
+	EstimatedDays *string
+	WeightGrams   *int32
+	AreaID        *string
+	AreaLabel     *string
+}
+
+// Choice converts the snapshot (nil for orders without one).
+func (c ShippingColumns) Choice() *ShippingChoice {
+	if c.Provider == nil {
+		return nil
+	}
+	return &ShippingChoice{Provider: *c.Provider, CourierCode: deref(c.CourierCode), CourierName: deref(c.CourierName),
+		ServiceCode: deref(c.ServiceCode), ServiceName: deref(c.ServiceName), EstimatedDays: deref(c.EstimatedDays),
+		WeightGrams: int(deref(c.WeightGrams)), AreaID: deref(c.AreaID), AreaLabel: deref(c.AreaLabel)}
 }
 
 type Order struct {
@@ -137,7 +214,8 @@ type Order struct {
 	CancelledAt  *time.Time
 	CancelReason string // USER_CANCELLED | PAYMENT_EXPIRED | ADMIN_CANCELLED
 	CompletedAt  *time.Time
-	Shipment     *Shipment // set once the shop shipped the order
+	Shipping     *ShippingChoice // chosen at checkout; nil for older orders
+	Shipment     *Shipment       // the active shipment, with tracking events
 
 	Payments       []payment.Attempt // oldest first
 	PaymentEnabled bool              // online payment is configured

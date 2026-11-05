@@ -1758,3 +1758,108 @@ body.page-checkout .main { padding-bottom: var(--space-4); }
 /* ---------- Phase 8: shipment & moderation on buyer pages ---------- */
 .od-shipment-note { grid-column: 1 / -1; margin: 0; font-size: 0.8125rem; }
 .review-card__hidden { display: inline-block; margin-left: var(--space-2); padding: 0 var(--space-2); border-radius: 999px; background: #efede8; color: var(--muted); font-size: 0.75rem; font-weight: 600; }
+
+/* Shipping (Phase 10): courier choice at checkout, delivery area picker,
+   shipment status and tracking timeline. */
+.co-shipping__message { margin: 0 0 var(--space-2); font-size: 0.875rem; }
+.co-note--warn { color: #7a5200; }
+.ship-chosen {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--brand-tint-strong);
+  border-radius: var(--radius);
+  background: var(--brand-tint);
+}
+.ship-chosen__name { margin: 0; font-weight: 700; font-size: 0.9375rem; }
+.ship-chosen__eta { margin: 2px 0 0; color: var(--muted); font-size: 0.8125rem; }
+.ship-chosen__price { margin: 0; font-weight: 700; white-space: nowrap; }
+.ship-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.ship-option.is-selected { border-color: var(--brand); background: var(--brand-tint); }
+.ship-option input { width: 18px; height: 18px; accent-color: var(--brand); }
+.ship-option__body { display: grid; gap: 2px; min-width: 0; }
+.ship-option__name { font-weight: 600; font-size: 0.875rem; }
+.ship-option__eta { color: var(--muted); font-size: 0.75rem; }
+.ship-option__price { font-weight: 700; font-size: 0.875rem; white-space: nowrap; }
+
+.area-picker { display: grid; gap: var(--space-2); }
+.area-search { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-2); }
+.area-search__btn { white-space: nowrap; }
+.area-options { display: grid; gap: var(--space-2); margin: 0; padding: 0; border: 0; }
+.area-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+.area-option.is-selected { border-color: var(--brand); background: var(--brand-tint); }
+.area-option input { width: 18px; height: 18px; accent-color: var(--brand); }
+.area-option__label { display: flex; align-items: center; gap: 6px; }
+.area-option__label .icon { color: var(--brand); flex: none; }
+.area-results__empty { margin: 0; font-size: 0.8125rem; }
+.address-card__area { display: flex; align-items: center; gap: 6px; margin: 0 0 var(--space-2); color: var(--muted); font-size: 0.8125rem; }
+.address-card__area .icon { color: var(--brand); flex: none; }
+.address-card__area.is-missing { color: #7a5200; }
+
+.ship-card { display: grid; gap: var(--space-2); }
+.ship-card__head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.ship-card__head .card__title { margin: 0; }
+.ship-card__note, .ship-card__link { margin: 0; font-size: 0.8125rem; }
+.ship-awb { font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+.ship-status {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--info-bg);
+  color: var(--info);
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ship-status--DELIVERED { background: var(--success-bg); color: var(--success); }
+.ship-status--CREATED, .ship-status--PENDING { background: #fff3d6; color: #7a5200; }
+.ship-status--EXCEPTION, .ship-status--RETURNED, .ship-status--FAILED { background: var(--danger-bg); color: var(--danger); }
+.ship-status--CANCELLED { background: #efede8; color: var(--muted); }
+.ship-timeline { position: relative; display: grid; gap: var(--space-3); margin: var(--space-2) 0 0; padding: 0 0 0 var(--space-5); list-style: none; }
+.ship-timeline::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 7px;
+  width: 2px;
+  background: var(--border);
+}
+.ship-timeline__item { position: relative; }
+.ship-timeline__item::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: calc(-1 * var(--space-5) + 3px);
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: #cfc6b8;
+}
+.ship-timeline__item.is-latest::before { background: var(--brand); box-shadow: 0 0 0 3px var(--brand-tint-strong); }
+.ship-timeline__text { margin: 0; font-size: 0.875rem; }
+.ship-timeline__item.is-latest .ship-timeline__text { font-weight: 600; }
+.ship-timeline__time { margin: 2px 0 0; color: var(--muted); font-size: 0.75rem; }

@@ -11,58 +11,89 @@ import (
 )
 
 const adminOrder = `-- name: AdminOrder :one
-SELECT o.id, o.order_number, o.user_id, o.idempotency_key, o.status, o.subtotal, o.shipping_cost, o.discount, o.total, o.address_label, o.recipient_name, o.recipient_phone, o.province, o.city, o.district, o.village, o.postal_code, o.address, o.latitude, o.longitude, o.created_at, o.updated_at, o.payment_due_at, o.paid_at, o.cancelled_at, o.cancel_reason, o.stock_restored_at, o.completed_at, o.confirmed_at,
+SELECT o.id, o.order_number, o.user_id, o.idempotency_key, o.status, o.subtotal, o.shipping_cost, o.discount, o.total, o.address_label, o.recipient_name, o.recipient_phone, o.province, o.city, o.district, o.village, o.postal_code, o.address, o.latitude, o.longitude, o.created_at, o.updated_at, o.payment_due_at, o.paid_at, o.cancelled_at, o.cancel_reason, o.stock_restored_at, o.completed_at, o.confirmed_at, o.shipping_provider, o.shipping_courier_code, o.shipping_courier_name, o.shipping_service_code, o.shipping_service_name, o.shipping_estimated_days, o.shipping_weight_grams, o.shipping_area_id, o.shipping_area_label, o.shipping_origin,
        u.email,
        coalesce(up.first_name, '')::text AS first_name,
        coalesce(up.last_name, '')::text  AS last_name,
-       s.courier_name, s.service_name, s.tracking_number, s.shipped_at, s.note AS shipment_note
+       s.id AS shipment_id, s.method AS shipment_method, s.provider AS shipment_provider,
+       s.courier_name, s.courier_code AS shipment_courier_code, s.service_name, s.service_code AS shipment_service_code,
+       s.tracking_number, s.tracking_url AS shipment_tracking_url, s.status AS shipment_status,
+       s.estimated_days AS shipment_estimated_days, s.shipped_at, s.booked_at AS shipment_booked_at,
+       s.delivered_at AS shipment_delivered_at, s.cancelled_at AS shipment_cancelled_at,
+       s.last_synced_at AS shipment_synced_at, s.created_at AS shipment_created_at, s.note AS shipment_note,
+       s.failure_reason AS shipment_failure_reason
 FROM orders o
 JOIN users u ON u.id = o.user_id
 LEFT JOIN user_profiles up ON up.user_id = o.user_id
-LEFT JOIN shipments s ON s.order_id = o.id
+LEFT JOIN shipments s ON s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'FAILED')
 WHERE o.order_number = $1
 `
 
 type AdminOrderRow struct {
-	ID              int64
-	OrderNumber     string
-	UserID          int64
-	IdempotencyKey  *string
-	Status          string
-	Subtotal        int64
-	ShippingCost    int64
-	Discount        int64
-	Total           int64
-	AddressLabel    string
-	RecipientName   string
-	RecipientPhone  string
-	Province        string
-	City            string
-	District        string
-	Village         string
-	PostalCode      string
-	Address         string
-	Latitude        *float64
-	Longitude       *float64
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	PaymentDueAt    time.Time
-	PaidAt          *time.Time
-	CancelledAt     *time.Time
-	CancelReason    *string
-	StockRestoredAt *time.Time
-	CompletedAt     *time.Time
-	ConfirmedAt     *time.Time
-	Email           string
-	FirstName       string
-	LastName        string
-	CourierName     *string
-	ServiceName     *string
-	TrackingNumber  *string
-	ShippedAt       *time.Time
-	ShipmentNote    *string
+	ID                    int64
+	OrderNumber           string
+	UserID                int64
+	IdempotencyKey        *string
+	Status                string
+	Subtotal              int64
+	ShippingCost          int64
+	Discount              int64
+	Total                 int64
+	AddressLabel          string
+	RecipientName         string
+	RecipientPhone        string
+	Province              string
+	City                  string
+	District              string
+	Village               string
+	PostalCode            string
+	Address               string
+	Latitude              *float64
+	Longitude             *float64
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
+	PaymentDueAt          time.Time
+	PaidAt                *time.Time
+	CancelledAt           *time.Time
+	CancelReason          *string
+	StockRestoredAt       *time.Time
+	CompletedAt           *time.Time
+	ConfirmedAt           *time.Time
+	ShippingProvider      *string
+	ShippingCourierCode   *string
+	ShippingCourierName   *string
+	ShippingServiceCode   *string
+	ShippingServiceName   *string
+	ShippingEstimatedDays *string
+	ShippingWeightGrams   *int32
+	ShippingAreaID        *string
+	ShippingAreaLabel     *string
+	ShippingOrigin        []byte
+	Email                 string
+	FirstName             string
+	LastName              string
+	ShipmentID            *int64
+	ShipmentMethod        *string
+	ShipmentProvider      *string
+	CourierName           *string
+	ShipmentCourierCode   *string
+	ServiceName           *string
+	ShipmentServiceCode   *string
+	TrackingNumber        *string
+	ShipmentTrackingUrl   *string
+	ShipmentStatus        *string
+	ShipmentEstimatedDays *string
+	ShippedAt             *time.Time
+	ShipmentBookedAt      *time.Time
+	ShipmentDeliveredAt   *time.Time
+	ShipmentCancelledAt   *time.Time
+	ShipmentSyncedAt      *time.Time
+	ShipmentCreatedAt     *time.Time
+	ShipmentNote          *string
+	ShipmentFailureReason *string
 }
 
+// At most one active shipment per order (shipments_active_order_idx).
 func (q *Queries) AdminOrder(ctx context.Context, orderNumber string) (AdminOrderRow, error) {
 	row := q.db.QueryRow(ctx, adminOrder, orderNumber)
 	var i AdminOrderRow
@@ -96,14 +127,38 @@ func (q *Queries) AdminOrder(ctx context.Context, orderNumber string) (AdminOrde
 		&i.StockRestoredAt,
 		&i.CompletedAt,
 		&i.ConfirmedAt,
+		&i.ShippingProvider,
+		&i.ShippingCourierCode,
+		&i.ShippingCourierName,
+		&i.ShippingServiceCode,
+		&i.ShippingServiceName,
+		&i.ShippingEstimatedDays,
+		&i.ShippingWeightGrams,
+		&i.ShippingAreaID,
+		&i.ShippingAreaLabel,
+		&i.ShippingOrigin,
 		&i.Email,
 		&i.FirstName,
 		&i.LastName,
+		&i.ShipmentID,
+		&i.ShipmentMethod,
+		&i.ShipmentProvider,
 		&i.CourierName,
+		&i.ShipmentCourierCode,
 		&i.ServiceName,
+		&i.ShipmentServiceCode,
 		&i.TrackingNumber,
+		&i.ShipmentTrackingUrl,
+		&i.ShipmentStatus,
+		&i.ShipmentEstimatedDays,
 		&i.ShippedAt,
+		&i.ShipmentBookedAt,
+		&i.ShipmentDeliveredAt,
+		&i.ShipmentCancelledAt,
+		&i.ShipmentSyncedAt,
+		&i.ShipmentCreatedAt,
 		&i.ShipmentNote,
+		&i.ShipmentFailureReason,
 	)
 	return i, err
 }
@@ -294,8 +349,8 @@ func (q *Queries) CreateCancellationRefund(ctx context.Context, arg CreateCancel
 }
 
 const createShipment = `-- name: CreateShipment :exec
-INSERT INTO shipments (order_id, courier_name, service_name, tracking_number, note, shipped_at, created_by)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO shipments (order_id, method, courier_name, service_name, tracking_number, note, shipped_at, status, created_by)
+VALUES ($1, 'MANUAL', $2, $3, $4, $5, $6, 'IN_TRANSIT', $7)
 `
 
 type CreateShipmentParams struct {
@@ -304,10 +359,13 @@ type CreateShipmentParams struct {
 	ServiceName    string
 	TrackingNumber string
 	Note           string
-	ShippedAt      time.Time
+	ShippedAt      *time.Time
 	CreatedBy      *int64
 }
 
+// CreateShipment records a manual shipment (the fallback when no provider
+// booking is made). At most one active shipment per order: a unique index
+// refuses a second one.
 func (q *Queries) CreateShipment(ctx context.Context, arg CreateShipmentParams) error {
 	_, err := q.db.Exec(ctx, createShipment,
 		arg.OrderID,

@@ -13,6 +13,7 @@ import (
 const adminProduct = `-- name: AdminProduct :one
 SELECT p.id, p.category_id, p.name, p.slug, p.description, p.brand, p.active, p.featured, p.flash_sale,
        p.sold_count, p.rating_average, p.rating_count, p.created_at, p.updated_at,
+       p.weight_grams, p.length_cm, p.width_cm, p.height_cm,
        coalesce((SELECT json_agg(json_build_object('url', i.url, 'alt', i.alt)
                                  ORDER BY i.display_order, i.id)
                  FROM product_images i WHERE i.product_id = p.id), '[]')::json AS images,
@@ -25,7 +26,7 @@ SELECT p.id, p.category_id, p.name, p.slug, p.description, p.brand, p.active, p.
                  FROM product_attributes a WHERE a.product_id = p.id), '[]')::json AS attributes,
        coalesce((SELECT json_agg(json_build_object(
                           'id', v.id, 'sku', v.sku, 'price', v.price, 'original_price', v.original_price,
-                          'stock', v.stock, 'active', v.active,
+                          'stock', v.stock, 'active', v.active, 'weight_grams', v.weight_grams,
                           'value_ids', (SELECT coalesce(json_agg(vv.value_id ORDER BY a.display_order, a.id), '[]')
                                         FROM product_variant_values vv
                                         JOIN product_attributes a ON a.id = vv.attribute_id
@@ -51,6 +52,10 @@ type AdminProductRow struct {
 	RatingCount   int32
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+	WeightGrams   int32
+	LengthCm      *int32
+	WidthCm       *int32
+	HeightCm      *int32
 	Images        []byte
 	Attributes    []byte
 	Variants      []byte
@@ -76,6 +81,10 @@ func (q *Queries) AdminProduct(ctx context.Context, id int64) (AdminProductRow, 
 		&i.RatingCount,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.WeightGrams,
+		&i.LengthCm,
+		&i.WidthCm,
+		&i.HeightCm,
 		&i.Images,
 		&i.Attributes,
 		&i.Variants,
@@ -90,7 +99,9 @@ SELECT p.id, p.name, p.slug, p.brand, p.active, p.price, p.price_max, p.in_stock
        (SELECT count(*) FROM product_variants v WHERE v.product_id = p.id)::int AS variant_count,
        (SELECT coalesce(sum(v.stock), 0) FROM product_variants v WHERE v.product_id = p.id AND v.active)::int AS stock,
        coalesce((SELECT i.url FROM product_images i WHERE i.product_id = p.id
-                 ORDER BY i.display_order, i.id LIMIT 1), '')::text AS image_url
+                 ORDER BY i.display_order, i.id LIMIT 1), '')::text AS image_url,
+       (p.weight_grams = 0 AND EXISTS (SELECT 1 FROM product_variants v
+                                       WHERE v.product_id = p.id AND v.active AND v.weight_grams IS NULL))::boolean AS weight_missing
 FROM products p
 JOIN categories c ON c.id = p.category_id
 WHERE ($1::bigint IS NULL OR p.category_id = $1)
@@ -123,6 +134,7 @@ type AdminProductsRow struct {
 	VariantCount   int32
 	Stock          int32
 	ImageUrl       string
+	WeightMissing  bool
 }
 
 // Admin catalog management. Products are deactivated, never deleted, so
@@ -158,6 +170,7 @@ func (q *Queries) AdminProducts(ctx context.Context, arg AdminProductsParams) ([
 			&i.VariantCount,
 			&i.Stock,
 			&i.ImageUrl,
+			&i.WeightMissing,
 		); err != nil {
 			return nil, err
 		}
@@ -191,8 +204,10 @@ func (q *Queries) AssignValueToAllVariants(ctx context.Context, arg AssignValueT
 
 const createProduct = `-- name: CreateProduct :one
 
-INSERT INTO products (category_id, name, slug, description, brand, active, featured, flash_sale)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO products (category_id, name, slug, description, brand, active, featured, flash_sale,
+                      weight_grams, length_cm, width_cm, height_cm)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+        $9, $10, $11, $12)
 RETURNING id
 `
 
@@ -205,6 +220,10 @@ type CreateProductParams struct {
 	Active      bool
 	Featured    bool
 	FlashSale   bool
+	WeightGrams int32
+	LengthCm    *int32
+	WidthCm     *int32
+	HeightCm    *int32
 }
 
 // Admin-ready writes (used by product.Service.Create inside a transaction).
@@ -218,6 +237,10 @@ func (q *Queries) CreateProduct(ctx context.Context, arg CreateProductParams) (i
 		arg.Active,
 		arg.Featured,
 		arg.FlashSale,
+		arg.WeightGrams,
+		arg.LengthCm,
+		arg.WidthCm,
+		arg.HeightCm,
 	)
 	var id int64
 	err := row.Scan(&id)
@@ -285,8 +308,8 @@ func (q *Queries) CreateProductImage(ctx context.Context, arg CreateProductImage
 }
 
 const createProductVariant = `-- name: CreateProductVariant :one
-INSERT INTO product_variants (product_id, sku, price, original_price, stock, active)
-VALUES ($1, $2, $3, $4, $5, true)
+INSERT INTO product_variants (product_id, sku, price, original_price, stock, weight_grams, active)
+VALUES ($1, $2, $3, $4, $5, $6, true)
 RETURNING id
 `
 
@@ -296,6 +319,7 @@ type CreateProductVariantParams struct {
 	Price         int64
 	OriginalPrice *int64
 	Stock         int32
+	WeightGrams   *int32
 }
 
 func (q *Queries) CreateProductVariant(ctx context.Context, arg CreateProductVariantParams) (int64, error) {
@@ -305,6 +329,7 @@ func (q *Queries) CreateProductVariant(ctx context.Context, arg CreateProductVar
 		arg.Price,
 		arg.OriginalPrice,
 		arg.Stock,
+		arg.WeightGrams,
 	)
 	var id int64
 	err := row.Scan(&id)
@@ -334,8 +359,8 @@ func (q *Queries) CreateProductVariantValue(ctx context.Context, arg CreateProdu
 }
 
 const createVariantRow = `-- name: CreateVariantRow :one
-INSERT INTO product_variants (product_id, sku, price, original_price, stock, active)
-VALUES ($1, $2, $3, $4, $5, true)
+INSERT INTO product_variants (product_id, sku, price, original_price, stock, weight_grams, active)
+VALUES ($1, $2, $3, $4, $5, $6, true)
 RETURNING id
 `
 
@@ -345,6 +370,7 @@ type CreateVariantRowParams struct {
 	Price         int64
 	OriginalPrice *int64
 	Stock         int32
+	WeightGrams   *int32
 }
 
 func (q *Queries) CreateVariantRow(ctx context.Context, arg CreateVariantRowParams) (int64, error) {
@@ -354,6 +380,7 @@ func (q *Queries) CreateVariantRow(ctx context.Context, arg CreateVariantRowPara
 		arg.Price,
 		arg.OriginalPrice,
 		arg.Stock,
+		arg.WeightGrams,
 	)
 	var id int64
 	err := row.Scan(&id)
@@ -723,7 +750,7 @@ func (q *Queries) LockProductRow(ctx context.Context, id int64) (LockProductRowR
 }
 
 const lockProductVariant = `-- name: LockProductVariant :one
-SELECT id, product_id, sku, price, original_price, stock, active
+SELECT id, product_id, sku, price, original_price, stock, active, weight_grams
 FROM product_variants
 WHERE id = $1 AND product_id = $2
 FOR UPDATE
@@ -742,6 +769,7 @@ type LockProductVariantRow struct {
 	OriginalPrice *int64
 	Stock         int32
 	Active        bool
+	WeightGrams   *int32
 }
 
 func (q *Queries) LockProductVariant(ctx context.Context, arg LockProductVariantParams) (LockProductVariantRow, error) {
@@ -755,6 +783,7 @@ func (q *Queries) LockProductVariant(ctx context.Context, arg LockProductVariant
 		&i.OriginalPrice,
 		&i.Stock,
 		&i.Active,
+		&i.WeightGrams,
 	)
 	return i, err
 }
@@ -800,8 +829,10 @@ func (q *Queries) SetProductActive(ctx context.Context, arg SetProductActivePara
 
 const updateProduct = `-- name: UpdateProduct :exec
 UPDATE products SET category_id = $1, name = $2, slug = $3, description = $4,
-                    brand = $5, active = $6, featured = $7, flash_sale = $8
-WHERE id = $9
+                    brand = $5, active = $6, featured = $7, flash_sale = $8,
+                    weight_grams = $9, length_cm = $10,
+                    width_cm = $11, height_cm = $12
+WHERE id = $13
 `
 
 type UpdateProductParams struct {
@@ -813,6 +844,10 @@ type UpdateProductParams struct {
 	Active      bool
 	Featured    bool
 	FlashSale   bool
+	WeightGrams int32
+	LengthCm    *int32
+	WidthCm     *int32
+	HeightCm    *int32
 	ID          int64
 }
 
@@ -826,14 +861,19 @@ func (q *Queries) UpdateProduct(ctx context.Context, arg UpdateProductParams) er
 		arg.Active,
 		arg.Featured,
 		arg.FlashSale,
+		arg.WeightGrams,
+		arg.LengthCm,
+		arg.WidthCm,
+		arg.HeightCm,
 		arg.ID,
 	)
 	return err
 }
 
 const updateVariant = `-- name: UpdateVariant :exec
-UPDATE product_variants SET sku = $1, price = $2, original_price = $3, active = $4
-WHERE id = $5 AND product_id = $6
+UPDATE product_variants SET sku = $1, price = $2, original_price = $3, active = $4,
+                            weight_grams = $5
+WHERE id = $6 AND product_id = $7
 `
 
 type UpdateVariantParams struct {
@@ -841,6 +881,7 @@ type UpdateVariantParams struct {
 	Price         int64
 	OriginalPrice *int64
 	Active        bool
+	WeightGrams   *int32
 	ID            int64
 	ProductID     int64
 }
@@ -853,6 +894,7 @@ func (q *Queries) UpdateVariant(ctx context.Context, arg UpdateVariantParams) er
 		arg.Price,
 		arg.OriginalPrice,
 		arg.Active,
+		arg.WeightGrams,
 		arg.ID,
 		arg.ProductID,
 	)

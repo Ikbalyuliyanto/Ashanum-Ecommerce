@@ -147,7 +147,7 @@ func TestAdminOrderToReturnFlow(t *testing.T) {
 	if status() != "SHIPPED" || queryID(t, db, "SELECT total FROM orders WHERE order_number = $1", number) != total {
 		t.Errorf("after ship: %s", status())
 	}
-	expect(t, buyer.get("/account/orders/"+number), http.StatusOK, "Pesanan sudah dikirim", "JNE", "JNE00012345", "belum diperbarui otomatis")
+	expect(t, buyer.get("/account/orders/"+number), http.StatusOK, "Pesanan sudah dikirim", "JNE", "JNE00012345", "Data pengiriman diisi oleh penjual")
 	if res := admin.post(orderPath+"/complete", nil); res.status != http.StatusSeeOther || status() != "COMPLETED" {
 		t.Fatalf("complete: %d %s", res.status, status())
 	}
@@ -241,7 +241,13 @@ func TestAdminCatalogForms(t *testing.T) {
 	expect(t, admin.post("/admin/products", url.Values{"name": {"X"}}), http.StatusUnprocessableEntity, "Periksa kembali")
 	form := url.Values{"name": {"Celana Chino"}, "category_id": {fmt.Sprint(cat)}, "brand": {"Ashanum"}, "active": {"1"},
 		"attr_name_1": {"Ukuran"}, "attr_values_1": {"30, 32, 34"}, "sku_prefix": {"CHINO"}, "price": {"Rp 249.000"}, "stock": {"3"},
-		"sold_count": {"999"}, "rating_average": {"5"}}
+		"weight_grams": {"450"}, "sold_count": {"999"}, "rating_average": {"5"}}
+	noWeight := url.Values{}
+	for k, v := range form {
+		noWeight[k] = v
+	}
+	noWeight.Del("weight_grams")
+	expect(t, admin.post("/admin/products", noWeight), http.StatusUnprocessableEntity, "Isi berat produk (gram)")
 	res := admin.post("/admin/products", form)
 	if res.status != http.StatusSeeOther || !strings.HasSuffix(res.location, "/edit") {
 		t.Fatalf("create product: %d %q\n%s", res.status, res.location, res.body)

@@ -11,12 +11,18 @@ import (
 )
 
 const getOrder = `-- name: GetOrder :one
-SELECT o.id, o.order_number, o.user_id, o.idempotency_key, o.status, o.subtotal, o.shipping_cost, o.discount, o.total, o.address_label, o.recipient_name, o.recipient_phone, o.province, o.city, o.district, o.village, o.postal_code, o.address, o.latitude, o.longitude, o.created_at, o.updated_at, o.payment_due_at, o.paid_at, o.cancelled_at, o.cancel_reason, o.stock_restored_at, o.completed_at, o.confirmed_at,
+SELECT o.id, o.order_number, o.user_id, o.idempotency_key, o.status, o.subtotal, o.shipping_cost, o.discount, o.total, o.address_label, o.recipient_name, o.recipient_phone, o.province, o.city, o.district, o.village, o.postal_code, o.address, o.latitude, o.longitude, o.created_at, o.updated_at, o.payment_due_at, o.paid_at, o.cancelled_at, o.cancel_reason, o.stock_restored_at, o.completed_at, o.confirmed_at, o.shipping_provider, o.shipping_courier_code, o.shipping_courier_name, o.shipping_service_code, o.shipping_service_name, o.shipping_estimated_days, o.shipping_weight_grams, o.shipping_area_id, o.shipping_area_label, o.shipping_origin,
        (o.paid_at IS NOT NULL AND EXISTS (
             SELECT 1 FROM payments p WHERE p.order_id = o.id AND p.status = 'PAID'))::boolean AS paid,
-       s.courier_name, s.service_name, s.tracking_number, s.shipped_at
+       s.id AS shipment_id, s.method AS shipment_method, s.provider AS shipment_provider,
+       s.courier_name, s.courier_code AS shipment_courier_code, s.service_name, s.service_code AS shipment_service_code,
+       s.tracking_number, s.tracking_url AS shipment_tracking_url, s.status AS shipment_status,
+       s.estimated_days AS shipment_estimated_days, s.shipped_at, s.booked_at AS shipment_booked_at,
+       s.delivered_at AS shipment_delivered_at, s.cancelled_at AS shipment_cancelled_at,
+       s.last_synced_at AS shipment_synced_at, s.created_at AS shipment_created_at, s.note AS shipment_note,
+       s.failure_reason AS shipment_failure_reason
 FROM orders o
-LEFT JOIN shipments s ON s.order_id = o.id
+LEFT JOIN shipments s ON s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'FAILED')
 WHERE o.order_number = $1 AND o.user_id = $2
 `
 
@@ -26,44 +32,71 @@ type GetOrderParams struct {
 }
 
 type GetOrderRow struct {
-	ID              int64
-	OrderNumber     string
-	UserID          int64
-	IdempotencyKey  *string
-	Status          string
-	Subtotal        int64
-	ShippingCost    int64
-	Discount        int64
-	Total           int64
-	AddressLabel    string
-	RecipientName   string
-	RecipientPhone  string
-	Province        string
-	City            string
-	District        string
-	Village         string
-	PostalCode      string
-	Address         string
-	Latitude        *float64
-	Longitude       *float64
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	PaymentDueAt    time.Time
-	PaidAt          *time.Time
-	CancelledAt     *time.Time
-	CancelReason    *string
-	StockRestoredAt *time.Time
-	CompletedAt     *time.Time
-	ConfirmedAt     *time.Time
-	Paid            bool
-	CourierName     *string
-	ServiceName     *string
-	TrackingNumber  *string
-	ShippedAt       *time.Time
+	ID                    int64
+	OrderNumber           string
+	UserID                int64
+	IdempotencyKey        *string
+	Status                string
+	Subtotal              int64
+	ShippingCost          int64
+	Discount              int64
+	Total                 int64
+	AddressLabel          string
+	RecipientName         string
+	RecipientPhone        string
+	Province              string
+	City                  string
+	District              string
+	Village               string
+	PostalCode            string
+	Address               string
+	Latitude              *float64
+	Longitude             *float64
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
+	PaymentDueAt          time.Time
+	PaidAt                *time.Time
+	CancelledAt           *time.Time
+	CancelReason          *string
+	StockRestoredAt       *time.Time
+	CompletedAt           *time.Time
+	ConfirmedAt           *time.Time
+	ShippingProvider      *string
+	ShippingCourierCode   *string
+	ShippingCourierName   *string
+	ShippingServiceCode   *string
+	ShippingServiceName   *string
+	ShippingEstimatedDays *string
+	ShippingWeightGrams   *int32
+	ShippingAreaID        *string
+	ShippingAreaLabel     *string
+	ShippingOrigin        []byte
+	Paid                  bool
+	ShipmentID            *int64
+	ShipmentMethod        *string
+	ShipmentProvider      *string
+	CourierName           *string
+	ShipmentCourierCode   *string
+	ServiceName           *string
+	ShipmentServiceCode   *string
+	TrackingNumber        *string
+	ShipmentTrackingUrl   *string
+	ShipmentStatus        *string
+	ShipmentEstimatedDays *string
+	ShippedAt             *time.Time
+	ShipmentBookedAt      *time.Time
+	ShipmentDeliveredAt   *time.Time
+	ShipmentCancelledAt   *time.Time
+	ShipmentSyncedAt      *time.Time
+	ShipmentCreatedAt     *time.Time
+	ShipmentNote          *string
+	ShipmentFailureReason *string
 }
 
 // GetOrder also reads whether a PAID payment exists (returns need it) and
-// the manual shipment, so the detail page needs no extra round trip.
+// the order's active shipment, so the detail page needs no extra round trip
+// (tracking events are read only when a shipment exists).
+// At most one active shipment per order (shipments_active_order_idx).
 func (q *Queries) GetOrder(ctx context.Context, arg GetOrderParams) (GetOrderRow, error) {
 	row := q.db.QueryRow(ctx, getOrder, arg.OrderNumber, arg.UserID)
 	var i GetOrderRow
@@ -97,17 +130,42 @@ func (q *Queries) GetOrder(ctx context.Context, arg GetOrderParams) (GetOrderRow
 		&i.StockRestoredAt,
 		&i.CompletedAt,
 		&i.ConfirmedAt,
+		&i.ShippingProvider,
+		&i.ShippingCourierCode,
+		&i.ShippingCourierName,
+		&i.ShippingServiceCode,
+		&i.ShippingServiceName,
+		&i.ShippingEstimatedDays,
+		&i.ShippingWeightGrams,
+		&i.ShippingAreaID,
+		&i.ShippingAreaLabel,
+		&i.ShippingOrigin,
 		&i.Paid,
+		&i.ShipmentID,
+		&i.ShipmentMethod,
+		&i.ShipmentProvider,
 		&i.CourierName,
+		&i.ShipmentCourierCode,
 		&i.ServiceName,
+		&i.ShipmentServiceCode,
 		&i.TrackingNumber,
+		&i.ShipmentTrackingUrl,
+		&i.ShipmentStatus,
+		&i.ShipmentEstimatedDays,
 		&i.ShippedAt,
+		&i.ShipmentBookedAt,
+		&i.ShipmentDeliveredAt,
+		&i.ShipmentCancelledAt,
+		&i.ShipmentSyncedAt,
+		&i.ShipmentCreatedAt,
+		&i.ShipmentNote,
+		&i.ShipmentFailureReason,
 	)
 	return i, err
 }
 
 const listOrderItems = `-- name: ListOrderItems :many
-SELECT oi.id, oi.order_id, oi.product_id, oi.variant_id, oi.product_name, oi.product_slug, oi.sku, oi.variant_label, oi.image_url, oi.unit_price, oi.quantity, oi.subtotal, oi.created_at, r.id AS review_id,
+SELECT oi.id, oi.order_id, oi.product_id, oi.variant_id, oi.product_name, oi.product_slug, oi.sku, oi.variant_label, oi.image_url, oi.unit_price, oi.quantity, oi.subtotal, oi.created_at, oi.weight_grams, r.id AS review_id,
        coalesce((SELECT sum(coalesce(ri.approved_quantity, ri.quantity)) FROM return_items ri
                  JOIN returns rt ON rt.id = ri.return_id
                  WHERE ri.order_item_id = oi.id AND rt.status NOT IN ('REJECTED', 'CANCELLED')), 0)::int AS returned
@@ -131,6 +189,7 @@ type ListOrderItemsRow struct {
 	Quantity     int32
 	Subtotal     int64
 	CreatedAt    time.Time
+	WeightGrams  *int32
 	ReviewID     *int64
 	Returned     int32
 }
@@ -162,6 +221,7 @@ func (q *Queries) ListOrderItems(ctx context.Context, orderID int64) ([]ListOrde
 			&i.Quantity,
 			&i.Subtotal,
 			&i.CreatedAt,
+			&i.WeightGrams,
 			&i.ReviewID,
 			&i.Returned,
 		); err != nil {

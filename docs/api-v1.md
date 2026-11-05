@@ -64,6 +64,7 @@ instance, limit ini per instance):
 | `POST /auth/register` | 10 / 10 menit |
 | `POST /auth/login` | 20 / 5 menit |
 | `POST /auth/refresh`, `POST /auth/logout` | 60 / 5 menit |
+| `GET /shipping/areas`, `POST /shipping/rates` | 60 / menit (memanggil penyedia pengiriman) |
 
 Lewat batas → `429 RATE_LIMITED` dengan header `Retry-After` (detik).
 
@@ -130,14 +131,18 @@ PostgreSQL, stack trace, path paket, atau error mentah Midtrans.
 | 405 | `METHOD_NOT_ALLOWED` | |
 | 409 | `EMAIL_TAKEN`, `ALREADY_REVIEWED`, `ALREADY_PAID` | Konflik dengan data yang ada |
 | 409 | `STOCK_CHANGED`, `PRICE_CHANGED`, `PRODUCT_UNAVAILABLE` | Checkout: data berubah sejak preview |
+| 409 | `SHIPPING_CHANGED` | Quote ongkir kedaluwarsa, sudah dipakai, milik orang lain, atau alamat/paket berubah → preview ulang |
+| 409 | `ITEMS_NOT_SHIPPABLE` | Ada produk tanpa berat (penjual belum mengatur) |
 | 409 | `REVIEW_NOT_ALLOWED`, `RETURN_NOT_ALLOWED`, `INVALID_STATE` | Status pesanan/retur tidak mengizinkan |
 | 413 | `PAYLOAD_TOO_LARGE` | Body > 64 KiB |
 | 415 | `UNSUPPORTED_MEDIA_TYPE` | Bukan `application/json` |
 | 422 | `VALIDATION_ERROR` | Isian tidak valid (lihat `fields`) |
 | 422 | `PRODUCT_UNAVAILABLE`, `CART_FULL`, `ADDRESS_LIMIT` | Keranjang/alamat |
+| 422 | `SHIPPING_AREA_REQUIRED`, `NO_COURIER` | Alamat belum punya area pengiriman / tidak ada kurir untuk rute ini |
 | 429 | `RATE_LIMITED` | Terlalu banyak percobaan (`Retry-After`) |
 | 500 | `INTERNAL_ERROR` | Kesalahan server (detail hanya di log server) |
 | 503 | `PAYMENT_UNAVAILABLE`, `PAYMENT_PROVIDER_UNAVAILABLE` | Pembayaran online belum aktif / Midtrans tidak terjangkau |
+| 503 | `SHIPPING_PROVIDER_UNAVAILABLE` | Ongkir tidak dapat dihitung saat ini (penyedia tidak terjangkau/belum dikonfigurasi) |
 
 Respons yang butuh login memakai `Cache-Control: no-store`.
 
@@ -157,10 +162,17 @@ Respons yang butuh login memakai `Cache-Control: no-store`.
 | GET | `/me` 🔒 | – | 200 user |
 | PATCH | `/me/profile` 🔒 | `{first_name?, last_name?, phone?, gender?}` (hanya yang dikirim berubah) | 200 user |
 | GET | `/me/addresses` 🔒 | – | 200 daftar alamat (utama dulu) |
-| POST | `/me/addresses` 🔒 | `{label, recipient_name, phone, province, city, district, village, postal_code, street_address, latitude?, longitude?, maps_url?, is_primary?}` | 201 alamat |
+| POST | `/me/addresses` 🔒 | `{label, recipient_name, phone, province, city, district, village, postal_code, street_address, latitude?, longitude?, maps_url?, is_primary?, shipping_area_id?}` | 201 alamat |
 | PATCH | `/me/addresses/{id}` 🔒 | field yang ingin diubah | 200 alamat |
 | DELETE | `/me/addresses/{id}` 🔒 | – | 204 |
 | POST | `/me/addresses/{id}/primary` 🔒 | – | 200 alamat |
+
+Area pengiriman: cari dengan `GET /shipping/areas?q=` (lihat bawah), lalu kirim
+`shipping_area_id` di alamat. Hanya id yang ditemukan server sendiri yang diterima (id
+karangan atau dari penyedia lain → `422`, `fields.shipping_area_id`). Bila area dipilih,
+`province`, `city`, `district`, `postal_code` diambil dari area (boleh tidak dikirim).
+`shipping_area_id: ""` menghapus area. Alamat berisi `shipping_area_id` dan
+`shipping_area_label` (null bila belum dipilih; checkout lalu tidak bisa menghitung ongkir).
 
 Contoh login:
 
@@ -237,29 +249,75 @@ unit_price, compare_at_price, quantity, stock, max_quantity, available, status, 
 `summary` menjumlahkan item yang bisa di-checkout. Harga di keranjang hanya tampilan;
 checkout menghitung ulang.
 
+### Pengiriman 🔒
+
+| Method | Path | Body / query | Sukses |
+|---|---|---|---|
+| GET | `/shipping/areas` | `q` (kecamatan/kota/kode pos, 3–60 huruf) | 200 `[{id, provider, label, province, city, district, postal_code, latitude, longitude}]` |
+| POST | `/shipping/rates` | `{cart_item_ids}` **atau** `{buy_now}`, `address_id` (wajib), `shipping_quote_id?` | 200 blok `shipping` (lihat preview) |
+
+`/shipping/rates` = bagian ongkir dari preview, tetapi menjawab error bila tidak ada opsi:
+`422 SHIPPING_AREA_REQUIRED`, `409 ITEMS_NOT_SHIPPABLE`, `422 NO_COURIER`,
+`503 SHIPPING_PROVIDER_UNAVAILABLE`. Preview tetap 200 dengan `shipping.status` yang
+menjelaskan (agar keranjang tetap bisa ditampilkan).
+
 ### Checkout & pesanan 🔒
 
 | Method | Path | Body / query | Sukses |
 |---|---|---|---|
-| POST | `/checkout/preview` | `{cart_item_ids}` **atau** `{buy_now: {variant_id, quantity}}`, `address_id?` | 200 preview |
-| POST | `/orders` | sama + `address_id`, `idempotency_key` (8–64, wajib), `expected_total?` | 201 pesanan (200 bila key sama) |
+| POST | `/checkout/preview` | `{cart_item_ids}` **atau** `{buy_now: {variant_id, quantity}}`, `address_id?`, `shipping_quote_id?` | 200 preview |
+| POST | `/orders` | sama + `address_id`, `shipping_quote_id` (wajib), `idempotency_key` (8–64, wajib), `expected_total?` | 201 pesanan (200 bila key sama) |
 | GET | `/orders` | `status` (`unpaid`\|`processing`\|`shipped`\|`completed`\|`cancelled`), `page` | daftar |
 | GET | `/orders/{order_number}` | – | detail |
 | POST | `/orders/{order_number}/cancel` | – | 200 detail (hanya pesanan belum bayar) |
 | POST | `/orders/{order_number}/payment` | – | 200 `{redirect_url, payment, sandbox}` |
 | GET | `/orders/{order_number}/payment` | – | 200 status terkini (dicek ke Midtrans) |
+| GET | `/orders/{order_number}/tracking` | – | 200 pengiriman + riwayat (dari database) |
 
 - Beli Sekarang (`buy_now`) tidak pernah masuk keranjang.
 - Harga, stok, dan total **selalu dari server**. `expected_total` hanya penjaga: jika total
   berubah sejak preview → `409 PRICE_CHANGED` (tampilkan preview baru).
 - `address_id` milik pengguna lain → `422` (tidak pernah diganti diam-diam).
-- Ongkos kirim: `shipping.cost = 0` dengan `status: "PENDING_INTEGRATION"` — integrasi kurir
-  belum ada; **bukan gratis ongkir**. `warnings` memuat `SHIPPING_NOT_CALCULATED`.
-- Detail pesanan memuat `items[].id` (untuk ulasan/retur), `returnable_quantity`,
-  `review_id`, `shipment` (input manual penjual, `live_tracking: false`), `latest_payment`,
-  `actions {can_pay, can_cancel, can_review, can_return}`, `return_deadline`, `returns`.
+- Ongkos kirim dihitung server dari berat katalog dan area alamat (penyedia: Biteship,
+  mode testing). Preview memuat `shipping_cost`, `total` (sudah termasuk ongkir) dan:
 
-Pembayaran: Midtrans **Sandbox saja**. `redirect_url` dibuka di browser/in-app browser.
+  ```json
+  "shipping": {
+    "status": "READY", "message": null, "cost": 9000, "weight_grams": 200, "changed": false,
+    "selected": {"quote_id": "8f0c…", "provider": "biteship", "courier_code": "jne", "courier_name": "JNE",
+                 "service_code": "reg", "service_name": "Reguler", "description": "", "price": 9000,
+                 "estimated_days": "2-3", "estimate_label": "2–3 hari", "expires_at": "2026-11-05T10:45:00+07:00"},
+    "options": [ … urut termurah … ]
+  }
+  ```
+
+  `status`: `READY`, `ADDRESS_REQUIRED`, `AREA_REQUIRED` (alamat tanpa area),
+  `ITEMS_BLOCKED` (ada produk bermasalah/tanpa berat), `NO_COURIER`,
+  `PROVIDER_UNAVAILABLE`, `NOT_CONFIGURED`. Selain READY, `ready=false`, `cost=0`
+  (**bukan gratis ongkir**, pesanan tidak bisa dibuat) dan `warnings` memuat
+  `SHIPPING_<status>`.
+- Pilihan kurir = `shipping_quote_id`. Kirim id yang sama ke preview berikutnya untuk tetap
+  memilihnya (harga & kedaluwarsa diperbarui); id yang tidak berlaku → opsi termurah dipilih,
+  `changed: true`, warning `SHIPPING_CHANGED`. Ganti alamat/jumlah → preview ulang.
+- `POST /orders` menerima **hanya** `shipping_quote_id`; tidak ada `shipping_cost` dari klien
+  (`400 UNKNOWN_FIELD`). Quote kedaluwarsa (default 30 menit), sudah dipakai, milik orang
+  lain, atau alamat/paket berubah → `409 SHIPPING_CHANGED`. Total = subtotal + ongkir quote.
+- Detail pesanan memuat `items[].id` (untuk ulasan/retur), `returnable_quantity`,
+  `review_id`, `shipping_cost`, `shipping` (snapshot pilihan checkout: `cost, provider,
+  courier_code, courier_name, service_code, service_name, estimated_days, estimate_label,
+  weight_grams, area_label`; semua null kecuali `cost: 0` untuk pesanan lama), `shipment`
+  (`method` PROVIDER/MANUAL, `status`, `status_label`, `courier`, `service`,
+  `tracking_number`, `tracking_url`, `shipped_at`, `delivered_at`, `live_tracking`), `latest_payment`,
+  `actions {can_pay, can_cancel, can_review, can_return}`, `return_deadline`, `returns`.
+- `GET /orders/{n}/tracking` → `{order_number, order_status, order_status_label, shipping,
+  shipment, events: [{status, status_label, description, location, time}]}` (terbaru dulu).
+  Status pengiriman: `CREATED` (menunggu penjemputan), `PICKED_UP`, `IN_TRANSIT`,
+  `OUT_FOR_DELIVERY`, `DELIVERED`, `EXCEPTION`, `RETURNED`, `CANCELLED`. `DELIVERED`
+  tidak membuat pesanan COMPLETED (penjual menyelesaikannya; jendela retur mulai saat itu).
+  Data diperbarui oleh webhook penyedia / penjual; endpoint ini tidak memanggil penyedia,
+  cukup dibaca ulang (tidak ada push).
+
+Pembayaran: Midtrans **Sandbox saja**, sebesar `total` pesanan (barang + ongkir). `redirect_url` dibuka di browser/in-app browser.
 Midtrans mengembalikan pembeli ke `API_PAYMENT_FINISH_URL` (app link yang diset server;
 klien tidak bisa memilih URL redirect). Kembali ke aplikasi **tidak** mengubah status:
 status lunas hanya dari notifikasi Midtrans yang diverifikasi atau pengecekan status ke

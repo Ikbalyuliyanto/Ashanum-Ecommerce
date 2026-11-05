@@ -236,3 +236,82 @@ func TestAPIConfig(t *testing.T) {
 		t.Error("an origin with a path accepted")
 	}
 }
+
+func TestShippingConfig(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("DATABASE_URL", "postgres://u:p@db:5432/shop")
+	for _, k := range []string{"SHIPPING_PROVIDER", "BITESHIP_API_KEY", "BITESHIP_ENV", "SHIPPING_LIVE_ENABLED", "BITESHIP_BASE_URL",
+		"BITESHIP_WEBHOOK_HEADER", "BITESHIP_WEBHOOK_SECRET", "SHIP_FROM_NAME", "SHIP_FROM_PHONE", "SHIP_FROM_ADDRESS",
+		"SHIP_FROM_POSTAL_CODE", "SHIP_FROM_AREA_ID", "SHIP_FROM_LATITUDE", "SHIP_FROM_LONGITUDE", "SHIPPING_COURIERS",
+		"SHIPPING_RATE_CACHE_TTL", "SHIPPING_QUOTE_TTL"} {
+		t.Setenv(k, "")
+	}
+	cfg, err := Load()
+	if err != nil || cfg.Shipping.Enabled() || cfg.Shipping.Biteship.Env != BiteshipTest || cfg.Shipping.LiveEnabled ||
+		len(cfg.Shipping.Couriers) != 5 || cfg.Shipping.RateCacheTTL != 10*time.Minute || cfg.Shipping.QuoteTTL != 30*time.Minute {
+		t.Fatalf("defaults (no key: shipping off, test env): %v %+v", err, cfg.Shipping)
+	}
+
+	t.Setenv("BITESHIP_API_KEY", "biteship_test.secret-value")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "SHIP_FROM_NAME") {
+		t.Errorf("a key needs the shop origin: %v", err)
+	}
+	t.Setenv("SHIP_FROM_NAME", "Toko Ashanum")
+	t.Setenv("SHIP_FROM_PHONE", "081200000001")
+	t.Setenv("SHIP_FROM_ADDRESS", "Jl. Asia Afrika No. 8, Bandung")
+	t.Setenv("SHIP_FROM_POSTAL_CODE", "40111")
+	if cfg, err := Load(); err != nil || !cfg.Shipping.Enabled() {
+		t.Fatalf("testing key with origin: %v", err)
+	}
+
+	// Live shipping only when explicitly enabled; keys must match the
+	// environment; errors never echo the key.
+	t.Setenv("BITESHIP_ENV", "live")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "SHIPPING_LIVE_ENABLED") || strings.Contains(err.Error(), "secret-value") {
+		t.Errorf("live without SHIPPING_LIVE_ENABLED: %v", err)
+	}
+	t.Setenv("SHIPPING_LIVE_ENABLED", "true")
+	if _, err := Load(); err == nil || strings.Contains(err.Error(), "secret-value") {
+		t.Errorf("live env with a testing key: %v", err)
+	}
+	t.Setenv("BITESHIP_API_KEY", "biteship_live.other-secret")
+	if cfg, err := Load(); err != nil || !cfg.Shipping.LiveEnabled {
+		t.Errorf("explicitly enabled live: %v", err)
+	}
+	t.Setenv("BITESHIP_ENV", "test")
+	t.Setenv("SHIPPING_LIVE_ENABLED", "")
+	if _, err := Load(); err == nil || strings.Contains(err.Error(), "other-secret") {
+		t.Errorf("test env with a live key: %v", err)
+	}
+	t.Setenv("BITESHIP_API_KEY", "biteship_test.secret-value")
+
+	bad := map[string]string{
+		"SHIPPING_PROVIDER":       "rajaongkir",
+		"SHIPPING_LIVE_ENABLED":   "yes",
+		"BITESHIP_ENV":            "sandbox",
+		"BITESHIP_WEBHOOK_SECRET": "short",
+		"BITESHIP_WEBHOOK_HEADER": "X Bad Header",
+		"BITESHIP_BASE_URL":       "not a url",
+		"SHIP_FROM_POSTAL_CODE":   "4011",
+		"SHIP_FROM_PHONE":         "telepon",
+		"SHIP_FROM_LATITUDE":      "-6.9",
+		"SHIPPING_COURIERS":       "jne,J&T",
+		"SHIPPING_RATE_CACHE_TTL": "1h",
+		"SHIPPING_QUOTE_TTL":      "1m",
+	}
+	for k, v := range bad {
+		t.Run(k, func(t *testing.T) {
+			t.Setenv(k, v)
+			if _, err := Load(); err == nil {
+				t.Errorf("%s=%s accepted", k, v)
+			}
+		})
+	}
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("SESSION_SECRET", "0123456789abcdef0123456789abcdef")
+	t.Setenv("BITESHIP_BASE_URL", "http://127.0.0.1:9000")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "BITESHIP_BASE_URL") {
+		t.Errorf("a fake provider URL in production: %v", err)
+	}
+}
